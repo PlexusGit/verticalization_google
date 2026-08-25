@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+venv
+.venv
+__pycache__
+.pytest_cache
+.coverage
+htmlcov
+credentials*.json
+*service-account*.json
+tests
+functions
+transcode_function
+vertical_render_function
