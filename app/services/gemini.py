@@ -3,16 +3,31 @@ from __future__ import annotations
 
 from google import genai
 from google.genai import types
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, model_validator
 
 from app.config import settings
 
 
 class SuggestedChapter(BaseModel):
-    start_seconds: float = Field(ge=0)
-    end_seconds: float = Field(gt=0)
+    """Gemini-compatible chapter schema with post-response validation.
+
+    Google GenAI's Schema protobuf rejects JSON Schema's ``exclusiveMinimum``.
+    Numeric constraints therefore live in a model validator rather than Field,
+    matching the simple structured-output approach proven in the RPP project.
+    """
+
+    start_seconds: float
+    end_seconds: float
     title: str
     reason: str
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> "SuggestedChapter":
+        if self.start_seconds < 0:
+            raise ValueError("start_seconds must be non-negative")
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
+        return self
 
 
 class ChapterSuggestions(BaseModel):

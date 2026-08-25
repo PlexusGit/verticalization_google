@@ -218,6 +218,8 @@ Os workers permitem invocação pública no nível Cloud Run porque usam `X-API-
 
 ## Desenvolvimento local
 
+Prepare uma única virtualenv na raiz; ela contém as dependências do app, workers e funções:
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
@@ -225,10 +227,42 @@ pip install -r requirements-test.txt
 
 gcloud auth application-default login
 ./test.sh
-uvicorn app.main:app --reload --port 8080
 ```
 
-Para processar vídeos localmente, implante os workers ou execute seus handlers localmente e preencha `TRANSCODE_URL` e `VERTICAL_RENDER_URL`.
+### Executar tudo
+
+```bash
+./run_all_local.sh
+```
+
+O orquestrador verifica conflitos de porta, injeta as URLs locais dos workers no app e encerra somente os processos que iniciou quando você pressiona `Ctrl+C`. Os handlers Functions Framework usam um servidor Werkzeug local, single-process e sem reloader, evitando o crash de `fork()` das bibliotecas Objective-C no macOS; os containers de produção continuam usando seus servidores normais.
+
+| Componente | URL local |
+|---|---|
+| App/UI | `http://127.0.0.1:8080` |
+| OpenAPI | `http://127.0.0.1:8080/docs` |
+| Transcode | `http://127.0.0.1:8081` |
+| Vertical render | `http://127.0.0.1:8082/health` |
+| Importador GCS | `http://127.0.0.1:8083` |
+| Importador S3 | `http://127.0.0.1:8084` |
+
+O transcode local usa CPU por padrão. Use `LOCAL_USE_NVENC=1` somente em um host NVIDIA com suporte `h264_nvenc` no FFmpeg.
+
+Os importadores iniciam mesmo com buckets opcionais vazios, mas ignoram/rejeitam eventos até `GCS_WATCH_BUCKET` ou `S3_WATCH_BUCKET` serem configurados.
+
+### Executar componentes separadamente
+
+Em terminais diferentes:
+
+```bash
+./transcode_function/run_local.sh
+./vertical_render_function/run_local.sh
+./run_local.sh
+./functions/process_gcs_bucket/run_local.sh
+./functions/process_S3_bucket/run_local.sh
+```
+
+As portas podem ser alteradas com `APP_LOCAL_PORT`, `TRANSCODE_LOCAL_PORT`, `VERTICAL_RENDER_LOCAL_PORT`, `GCS_IMPORT_LOCAL_PORT` e `S3_IMPORT_LOCAL_PORT`. Ao executar o app separadamente, ele aponta automaticamente para as portas locais configuradas.
 
 ## Testes
 

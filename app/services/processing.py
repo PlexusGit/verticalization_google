@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
+import time
 import uuid
 
 from google.cloud import firestore
@@ -10,7 +12,9 @@ from google.cloud import firestore
 from app.config import settings
 from app.db import get_db
 from app.models import RenderRequest, VideoStatus
-from app.services import chirp, gemini, srt, storage, transcode, vertical_render
+from app.services import chirp, events, gemini, srt, storage, transcode, vertical_render
+
+logger = logging.getLogger("plexus.processing")
 
 
 def create_video_record(
@@ -47,6 +51,13 @@ def create_video_record(
             "updated_at": firestore.SERVER_TIMESTAMP,
         }
     )
+    events.record(
+        video_id,
+        "upload",
+        "video_created",
+        "Registro do vídeo criado",
+        details={"filename": filename, "source_type": source_type, "owner_email": owner_email},
+    )
     return video_id, True
 
 
@@ -70,6 +81,13 @@ def store_uploaded_subtitles(video_id: str, subtitle_text: str) -> None:
             "updated_at": firestore.SERVER_TIMESTAMP,
         }
     )
+    events.record(
+        video_id,
+        "transcription",
+        "subtitles_uploaded",
+        "Legendas fornecidas pelo usuário foram armazenadas",
+        details={"characters": len(subtitle_text), "cue_count": len(srt.parse_srt(subtitle_text))},
+    )
 
 
 def process_video(video_id: str) -> None:
@@ -84,6 +102,14 @@ def process_video(video_id: str) -> None:
     if not snapshot.exists:
         return
     data = snapshot.to_dict() or {}
+    pipeline_started = time.monotonic()
+    events.record(
+        video_id,
+        "pipeline",
+        "pipeline_started",
+        "Pipeline de processamento iniciada",
+        details={"initial_status": data.get("status"), "retry": data.get("status") == VideoStatus.ERROR.value},
+    )
     try:
         source_path = data.get("gcs_source_path")
         if not source_path or not storage.object_exists(source_path):
@@ -93,6 +119,14 @@ def process_video(video_id: str) -> None:
         audio_chunks = data.get("gcs_audio_chunks") or []
         if not high_path or not storage.object_exists(high_path) or not audio_chunks:
             _stage(ref, VideoStatus.TRANSCODING)
+            stage_started = time.monotonic()
+            events.record(
+                video_id,
+                "transcode",
+                "transcode_started",
+                "Transcodificação e extração de áudio iniciadas",
+                details={"source_path": source_path},
+            )
             result = transcode.submit(video_id, source_path)
             high_path = result["high_gcs_path"]
             audio_chunks = result.get("gcs_audio_chunks") or []
@@ -114,12 +148,46 @@ def process_video(video_id: str) -> None:
                     "updated_at": firestore.SERVER_TIMESTAMP,
                 }
             )
+            events.record(
+                video_id,
+                "transcode",
+                "transcode_completed",
+                "Transcodificação e extração de áudio concluídas",
+                details={
+                    "elapsed_seconds": round(time.monotonic() - stage_started, 2),
+                    "duration_seconds": duration,
+                    "audio_chunk_count": len(audio_chunks),
+                    "high_path": high_path,
+                    "encoder": result.get("video_encoder"),
+                },
+            )
+        else:
+            events.record(
+                video_id,
+                "transcode",
+                "transcode_reused",
+                "Artefatos de transcode existentes foram reutilizados",
+                details={"audio_chunk_count": len(audio_chunks), "high_path": high_path},
+            )
 
         data = ref.get().to_dict() or {}
         subtitle_text = (data.get("subtitle_text") or "").strip()
         if not subtitle_text:
             _stage(ref, VideoStatus.TRANSCRIBING)
-            subtitle_text = chirp.transcribe_chunks(audio_chunks)
+            stage_started = time.monotonic()
+            events.record(
+                video_id,
+                "transcription",
+                "transcription_started",
+                "Transcrição PT-BR iniciada",
+                details={"engine": "chirp_3", "audio_chunk_count": len(audio_chunks)},
+            )
+            subtitle_text = chirp.transcribe_chunks(
+                audio_chunks,
+                callback=lambda action, message, details: events.record(
+                    video_id, "transcription", action, message, details=details
+                ),
+            )
             srt_path = f"{video_id}/{video_id}.srt"
             storage.upload_bytes(subtitle_text.encode(), srt_path, "application/x-subrip")
             ref.update(
@@ -130,11 +198,46 @@ def process_video(video_id: str) -> None:
                     "updated_at": firestore.SERVER_TIMESTAMP,
                 }
             )
+            events.record(
+                video_id,
+                "transcription",
+                "transcription_completed",
+                "Transcrição PT-BR armazenada",
+                details={
+                    "elapsed_seconds": round(time.monotonic() - stage_started, 2),
+                    "characters": len(subtitle_text),
+                    "cue_count": len(srt.parse_srt(subtitle_text)),
+                    "srt_path": srt_path,
+                },
+            )
+        else:
+            events.record(
+                video_id,
+                "transcription",
+                "transcription_reused",
+                "Transcrição existente foi reutilizada",
+                details={"source": data.get("subtitle_source"), "characters": len(subtitle_text)},
+            )
 
         _stage(ref, VideoStatus.SUGGESTING)
+        stage_started = time.monotonic()
+        events.record(
+            video_id,
+            "suggestion",
+            "suggestion_started",
+            "Geração de capítulos com Gemini iniciada",
+            details={"subtitle_characters": len(subtitle_text), "model": settings.GEMINI_MODEL},
+        )
         suggestions = gemini.suggest_chapters(subtitle_text)
         if not suggestions:
             raise RuntimeError("nenhum capítulo foi sugerido")
+        events.record(
+            video_id,
+            "suggestion",
+            "suggestion_completed",
+            "Gemini retornou capítulos válidos",
+            details={"elapsed_seconds": round(time.monotonic() - stage_started, 2), "chapter_count": len(suggestions)},
+        )
 
         chapter_refs = []
         for index, suggestion in enumerate(suggestions, start=1):
@@ -161,8 +264,22 @@ def process_video(video_id: str) -> None:
                 merge=True,
             )
             chapter_refs.append((chapter_id, chapter_ref))
+        events.record(
+            video_id,
+            "chapters",
+            "chapters_persisted",
+            "Capítulos sugeridos foram armazenados",
+            details={"chapter_count": len(chapter_refs)},
+        )
 
         _stage(ref, VideoStatus.RENDERING_DRAFTS)
+        events.record(
+            video_id,
+            "render",
+            "draft_batch_started",
+            "Renderização dos rascunhos verticais iniciada",
+            details={"chapter_count": len(chapter_refs)},
+        )
         errors: list[str] = []
         for chapter_id, chapter_ref in chapter_refs:
             chapter = chapter_ref.get().to_dict() or {}

@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_query import FieldFilter
 from pydantic import ValidationError
 
 from app.auth import get_current_user, request_is_authenticated
@@ -52,11 +53,26 @@ def _video_snapshot(video_id: str):
     return get_db().collection(settings.COLLECTION_VIDEOS).document(video_id).get()
 
 
+def _approval_block_reason(video_data: dict) -> str | None:
+    """Explain why a video cannot be approved in its current lifecycle state."""
+
+    if video_data.get("approved_at") or video_data.get("status") in {
+        VideoStatus.RENDERING_FINALS.value,
+        VideoStatus.COMPLETED.value,
+    }:
+        return "Os capítulos deste vídeo já foram aprovados"
+    if video_data.get("status") != VideoStatus.PENDING_REVIEW.value:
+        return "Os capítulos ainda não estão prontos para aprovação"
+    return None
+
+
 def _daily_limit_reached(owner_email: str) -> bool:
     """Enforce the configured per-owner limit without a composite index."""
 
     today = datetime.now(timezone.utc).date()
-    query = get_db().collection(settings.COLLECTION_VIDEOS).where("owner_email", "==", owner_email)
+    query = get_db().collection(settings.COLLECTION_VIDEOS).where(
+        filter=FieldFilter("owner_email", "==", owner_email)
+    )
     count = 0
     for document in query.stream():
         created = (document.to_dict() or {}).get("created_at")
@@ -413,11 +429,26 @@ async def approve(request: Request, video_id: str, background_tasks: BackgroundT
     video = _video_snapshot(video_id)
     if not video.exists:
         return JSONResponse({"error": "Vídeo não encontrado"}, status_code=404)
+    video_data = video.to_dict() or {}
+    if reason := _approval_block_reason(video_data):
+        return JSONResponse({"error": reason}, status_code=409)
+
     body = await request.json()
-    selected = list(body.get("chapter_ids") or [])
+    selected = list(dict.fromkeys(body.get("chapter_ids") or []))
     available = {document.id for document in video.reference.collection("chapters").stream()}
     if not selected or any(chapter_id not in available for chapter_id in selected):
         return JSONResponse({"error": "Selecione capítulos válidos"}, status_code=400)
+
+    # Persist the lock before dispatch so repeated clicks or concurrent requests
+    # cannot submit the same set of final renders twice.
+    video.reference.update(
+        {
+            "status": VideoStatus.RENDERING_FINALS.value,
+            "approved_chapter_ids": selected,
+            "approved_at": firestore.SERVER_TIMESTAMP,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+    )
     background_tasks.add_task(render_final_chapters, video_id, selected)
     return JSONResponse({"status": VideoStatus.RENDERING_FINALS.value}, status_code=202)
 
@@ -457,15 +488,6 @@ async def delete_video(request: Request, video_id: str):
     snapshot = _video_snapshot(video_id)
     if not snapshot.exists:
         return JSONResponse({"error": "Vídeo não encontrado"}, status_code=404)
-    active = {
-        VideoStatus.TRANSCODING.value,
-        VideoStatus.TRANSCRIBING.value,
-        VideoStatus.SUGGESTING.value,
-        VideoStatus.RENDERING_DRAFTS.value,
-        VideoStatus.RENDERING_FINALS.value,
-    }
-    if (snapshot.to_dict() or {}).get("status") in active:
-        return JSONResponse({"error": "Aguarde o processamento terminar antes de excluir"}, status_code=409)
     for chapter in snapshot.reference.collection("chapters").stream():
         for render in chapter.reference.collection("renders").stream():
             render.reference.delete()

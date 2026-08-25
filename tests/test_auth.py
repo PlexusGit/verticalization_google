@@ -23,7 +23,7 @@ class DocumentRef:
 class Collection:
     def __init__(self, exists): self.exists = exists
     def document(self, _email): return DocumentRef(self.exists)
-    def where(self, *_args): return self
+    def where(self, *_args, **_kwargs): return self
     def limit(self, _limit): return self
     def stream(self): return []
 

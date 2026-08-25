@@ -49,6 +49,7 @@ def test_authenticated_templates_render_in_pt_br(monkeypatch):
     assert detail.status_code == 200
     assert "Editor vertical" in detail.text
     assert 'src="/logo.svg"' in detail.text
+    assert 'id="approve" disabled' in detail.text
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="Node.js is unavailable")

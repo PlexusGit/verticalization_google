@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import Request
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 from app.config import settings
 
@@ -40,7 +41,7 @@ def is_user_allowed(db, email: str) -> bool:
     collection = db.collection(settings.ALLOWED_EMAILS_COLLECTION)
     if collection.document(normalized).get().exists:
         return True
-    return bool(list(collection.where("email", "==", normalized).limit(1).stream()))
+    return bool(list(collection.where(filter=FieldFilter("email", "==", normalized)).limit(1).stream()))
 
 
 def request_is_authenticated(request: Request) -> bool:
