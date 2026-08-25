@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Entrar — Plexus Vertical Cuts</title>
+  <link rel="icon" href="/logo.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/app.css">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body class="login-page">
+  <section class="login-card">
+    <img src="/logo.svg" alt="Plexus" class="login-logo">
+    <h1>Plexus Vertical Cuts</h1>
+    <p>Transforme reportagens horizontais em vídeos verticais prontos para revisão.</p>
+    <div id="g_id_onload" data-client_id="{{ google_client_id }}" data-callback="onGoogleCredential" data-auto_prompt="true"></div>
+    <div class="g_id_signin" data-type="standard" data-size="large" data-theme="outline" data-text="continue_with" data-shape="rectangular"></div>
+    <p id="login-error" class="error" hidden></p>
+  </section>
+<script>
+async function onGoogleCredential(response) {
+  const form = new URLSearchParams({credential: response.credential});
+  const result = await fetch('/auth/onetap', {method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form});
+  const data = await result.json();
+  if (result.ok) location.href = data.redirect;
+  else { const node=document.getElementById('login-error'); node.textContent=data.error||'Falha ao entrar'; node.hidden=false; }
+}
+</script>
+</body></html>

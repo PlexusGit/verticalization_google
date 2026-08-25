@@ -1,0 +1,4 @@
+// Shared browser helpers keep API error handling and untrusted text escaping consistent.
+function escapeHtml(value){const node=document.createElement('div');node.textContent=String(value??'');return node.innerHTML}
+function formatDuration(value){const seconds=Math.max(0,Math.floor(Number(value)||0)),hours=Math.floor(seconds/3600),minutes=Math.floor((seconds%3600)/60),rest=seconds%60;return hours?`${hours}:${String(minutes).padStart(2,'0')}:${String(rest).padStart(2,'0')}`:`${minutes}:${String(rest).padStart(2,'0')}`}
+async function api(url,options={}){const response=await fetch(url,options);const text=await response.text();let data={};try{data=text?JSON.parse(text):{}}catch{data={error:text}}if(!response.ok)throw new Error(typeof data.error==='string'?data.error:JSON.stringify(data.error||`HTTP ${response.status}`));return data}

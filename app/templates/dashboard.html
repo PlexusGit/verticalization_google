@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Painel — Plexus Vertical Cuts{% endblock %}
+{% block content %}
+<section class="hero"><div><p class="eyebrow">INTELIGÊNCIA DE VÍDEO</p><h1>Cortes verticais, com revisão humana.</h1><p>Envie uma reportagem, revise os capítulos sugeridos e exporte versões 9:16.</p></div><button class="button primary" id="open-upload">Novo vídeo</button></section>
+<section class="panel upload-panel" id="upload-panel" hidden>
+  <div class="section-head"><div><h2>Enviar vídeo</h2><p>MP4, MOV, MKV, WebM, AVI ou MXF.</p></div><button class="icon-button" id="close-upload" aria-label="Fechar">×</button></div>
+  <form id="upload-form">
+    <div class="form-grid"><label>Título<input id="title" required maxlength="180"></label><label>Descrição<input id="description" maxlength="600"></label></div>
+    <label class="dropzone" id="video-drop"><input id="video-file" type="file" accept="video/*,.mxf" required><strong>Arraste o vídeo ou clique para selecionar</strong><span id="video-name">Nenhum arquivo selecionado</span></label>
+    <label class="compact-file">SRT opcional <input id="subtitle-file" type="file" accept=".srt,application/x-subrip,text/plain"><span id="subtitle-name"></span></label>
+    <div class="progress" id="progress" hidden><span id="progress-label">Preparando…</span><div><i id="progress-bar"></i></div></div>
+    <div class="actions"><button class="button primary" id="upload-button">Enviar e processar</button></div>
+  </form>
+</section>
+<section>
+  <div class="section-head"><div><h2>Vídeos</h2><p>Acompanhe o processamento e abra itens prontos para revisão.</p></div><div class="filters" id="filters"><button class="active" data-status="">Todos</button><button data-status="PENDING_REVIEW">Para revisar</button><button data-status="COMPLETED">Concluídos</button><button data-status="ERROR">Com erro</button></div></div>
+  <div id="video-list" class="video-grid"><div class="empty">Carregando vídeos…</div></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/app.js"></script><script>
+// This page keeps framework-free JavaScript so publishers can customize it without a frontend build step.
+const labels={UPLOADING:'Enviando',TRANSCODING:'Convertendo',TRANSCRIBING:'Transcrevendo',SUGGESTING:'Criando capítulos',RENDERING_DRAFTS:'Gerando rascunhos',PENDING_REVIEW:'Aguardando revisão',RENDERING_FINALS:'Gerando finais',COMPLETED:'Concluído',ERROR:'Erro'};
+let filter='';
+const panel=document.getElementById('upload-panel');
+document.getElementById('open-upload').onclick=()=>{panel.hidden=false;panel.scrollIntoView({behavior:'smooth'})};
+document.getElementById('close-upload').onclick=()=>panel.hidden=true;
+for(const [input,name] of [['video-file','video-name'],['subtitle-file','subtitle-name']]) document.getElementById(input).onchange=e=>document.getElementById(name).textContent=e.target.files[0]?.name||'';
+document.getElementById('filters').onclick=e=>{if(e.target.dataset.status!==undefined){document.querySelectorAll('#filters button').forEach(b=>b.classList.remove('active'));e.target.classList.add('active');filter=e.target.dataset.status;loadVideos()}};
+// Poll Firestore-backed API state and render text only through escapeHtml to prevent stored XSS.
+async function loadVideos(){const response=await fetch('/api/videos'+(filter?'?status='+filter:''));const data=await response.json();const list=document.getElementById('video-list');if(!data.videos?.length){list.innerHTML='<div class="empty">Nenhum vídeo encontrado.</div>';return}list.innerHTML=data.videos.map(v=>`<a class="video-card" href="/video/${encodeURIComponent(v.id)}"><div class="video-thumb"><span>${escapeHtml((v.source_type||'upload').toUpperCase())}</span></div><div><div class="card-row"><h3>${escapeHtml(v.title||'Sem título')}</h3><span class="status ${String(v.status).toLowerCase()}">${escapeHtml(labels[v.status]||v.status)}</span></div><p>${escapeHtml(v.source_filename||'')} ${v.duration_seconds?' · '+formatDuration(v.duration_seconds):''}</p>${v.error?`<small class="error">${escapeHtml(v.error)}</small>`:''}</div></a>`).join('')}
+// Upload bytes directly to the resumable GCS URL, then ask the app to start processing.
+document.getElementById('upload-form').onsubmit=async e=>{e.preventDefault();const file=document.getElementById('video-file').files[0];if(!file)return;const button=document.getElementById('upload-button'),box=document.getElementById('progress'),bar=document.getElementById('progress-bar'),label=document.getElementById('progress-label');button.disabled=true;box.hidden=false;try{label.textContent='Criando sessão segura…';const init=await api('/api/upload/init',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:document.getElementById('title').value,description:document.getElementById('description').value,filename:file.name,content_type:file.type||'video/mp4',size_bytes:file.size})});label.textContent='Enviando ao armazenamento…';await new Promise((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('PUT',init.session_url);xhr.setRequestHeader('Content-Type',init.content_type);xhr.upload.onprogress=event=>{if(event.lengthComputable)bar.style.width=(event.loaded/event.total*100)+'%'};xhr.onload=()=>xhr.status<400?resolve():reject(new Error('Falha no upload: HTTP '+xhr.status));xhr.onerror=()=>reject(new Error('Falha de rede no upload'));xhr.send(file)});const subtitle=document.getElementById('subtitle-file').files[0];label.textContent='Iniciando processamento…';await api('/api/upload/finalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_id:init.video_id,subtitle_text:subtitle?await subtitle.text():''})});location.href='/video/'+init.video_id}catch(error){alert(error.message)}finally{button.disabled=false;box.hidden=true}};
+loadVideos();setInterval(loadVideos,5000);
+</script>{% endblock %}
