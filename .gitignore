@@ -16,3 +16,4 @@ credentials*.json
 build/
 dist/
 *.egg-info/
+plexus-vertical-cuts-*.json
