@@ -49,6 +49,8 @@ def test_authenticated_templates_render_in_pt_br(monkeypatch):
     templates = client.get("/templates")
     assert dashboard.status_code == 200
     assert "Cortes verticais, com revisão humana" in dashboard.text
+    assert 'data-video-id="${escapeHtml(v.id)}"' in dashboard.text
+    assert "video.currentTime=Math.min(1" in dashboard.text
     assert detail.status_code == 200
     assert "Editor vertical" in detail.text
     assert 'src="/logo.svg"' in detail.text
