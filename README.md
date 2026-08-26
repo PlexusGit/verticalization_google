@@ -148,7 +148,7 @@ Preencha pelo menos:
 | `BUCKET_NAME` | bucket gerenciado de vídeos, globalmente único |
 | `SERVICE_ACCOUNT_EMAIL` | conta de execução criada pelo setup |
 | `GOOGLE_CLIENT_ID` | OAuth Web Client para Google Identity Services |
-| `INITIAL_ALLOWED_EMAILS` | e-mails separados por vírgula |
+| `INITIAL_ALLOWED_EMAILS` | administradores iniciais, separados por vírgula |
 | `SECRET_KEY` | segredo longo para assinar sessões |
 | `SECURITY_TOKEN` | token longo para app, workers e importadores |
 | `GEMINI_API_KEY` | chave da Gemini API |

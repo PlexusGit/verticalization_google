@@ -36,7 +36,7 @@ def seed_allowed_emails() -> int:
     db = firestore.Client(project=project, database=database)
     batch = db.batch()
     for email in sorted(emails):
-        batch.set(db.collection(collection_name).document(email), {"email": email})
+        batch.set(db.collection(collection_name).document(email), {"email": email, "role": "admin"}, merge=True)
     batch.commit()
     print(f"Allowlist atualizada com {len(emails)} e-mail(s).")
     return len(emails)

@@ -15,7 +15,9 @@ def get_current_user(request: Request) -> dict | None:
     user_id = request.session.get("user_id")
     if not user_id:
         return None
-    return {"id": user_id, "info": request.session.get("user_info", {})}
+    info = dict(request.session.get("user_info", {}))
+    info.setdefault("role", "admin")
+    return {"id": user_id, "info": info}
 
 
 def verify_google_id_token(credential: str) -> dict | None:
@@ -32,16 +34,30 @@ def verify_google_id_token(credential: str) -> dict | None:
         return None
 
 
+def get_allowed_user(db, email: str) -> dict | None:
+    normalized = (email or "").strip().lower()
+    if not normalized:
+        return None
+    collection = db.collection(settings.ALLOWED_EMAILS_COLLECTION)
+    snapshot = collection.document(normalized).get()
+    if not snapshot.exists:
+        matches = list(collection.where(filter=FieldFilter("email", "==", normalized)).limit(1).stream())
+        if not matches:
+            return None
+        snapshot = matches[0]
+    data = (snapshot.to_dict() or {}) if hasattr(snapshot, "to_dict") else {}
+    return {**data, "email": normalized, "role": data.get("role") or "admin"}
+
+
 def is_user_allowed(db, email: str) -> bool:
     """Check the allowlist using normalized email as the preferred document ID."""
 
-    normalized = (email or "").strip().lower()
-    if not normalized:
-        return False
-    collection = db.collection(settings.ALLOWED_EMAILS_COLLECTION)
-    if collection.document(normalized).get().exists:
-        return True
-    return bool(list(collection.where(filter=FieldFilter("email", "==", normalized)).limit(1).stream()))
+    return get_allowed_user(db, email) is not None
+
+
+def request_is_admin(request: Request) -> bool:
+    user = get_current_user(request)
+    return bool(user and user["info"].get("role") == "admin")
 
 
 def request_is_authenticated(request: Request) -> bool:

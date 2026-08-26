@@ -11,7 +11,7 @@
 <body>
   <header class="topbar">
     <a class="brand" href="/dashboard"><img src="/logo.svg" alt="Plexus"><span>Plexus Vertical Cuts</span></a>
-    {% if user %}<div class="user"><span>{{ user.info.name or user.info.email }}</span><a href="/logout">Sair</a></div>{% endif %}
+    {% if user %}<nav class="topnav"><a href="/dashboard">Vídeos</a>{% if user.info.role == "admin" %}<a href="/users">Usuários</a>{% endif %}</nav><div class="user"><span>{{ user.info.name or user.info.email }}</span><a href="/logout">Sair</a></div>{% endif %}
   </header>
   <main class="container">{% block content %}{% endblock %}</main>
   {% block scripts %}{% endblock %}

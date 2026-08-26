@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Usuários — Plexus Vertical Cuts{% endblock %}
+{% block content %}
+<section class="section-head page-head"><div><p class="eyebrow">ADMINISTRAÇÃO</p><h1>Usuários</h1><p>Autorize novas contas Google e defina o nível de acesso.</p></div></section>
+<section class="panel">
+  <div class="section-head"><div><h2>Adicionar usuário</h2><p>O usuário poderá entrar com a conta Google correspondente.</p></div></div>
+  <form id="user-form">
+    <div class="form-grid"><label>E-mail<input id="user-email" type="email" required maxlength="254" placeholder="pessoa@empresa.com"></label><label>Tipo<select id="user-role"><option value="user">Usuário</option><option value="admin">Administrador</option></select></label></div>
+    <div class="actions"><span id="form-message" role="status"></span><button class="button primary" id="add-user">Adicionar usuário</button></div>
+  </form>
+</section>
+<section>
+  <div class="section-head"><div><h2>Usuários autorizados</h2><p>Contas que podem acessar a plataforma.</p></div></div>
+  <div class="panel table-panel"><div id="user-list" class="user-list"><div class="empty">Carregando usuários…</div></div></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/app.js"></script><script>
+const roleLabels={admin:'Administrador',user:'Usuário'};
+async function loadUsers(){const data=await api('/api/users');const list=document.getElementById('user-list');if(!data.users?.length){list.innerHTML='<div class="empty">Nenhum usuário autorizado.</div>';return}list.innerHTML=data.users.map(user=>`<div class="user-row"><div><strong>${escapeHtml(user.email)}</strong>${user.created_by?`<small>Adicionado por ${escapeHtml(user.created_by)}</small>`:''}</div><span class="role ${escapeHtml(user.role)}">${escapeHtml(roleLabels[user.role]||user.role)}</span></div>`).join('')}
+document.getElementById('user-form').onsubmit=async event=>{event.preventDefault();const button=document.getElementById('add-user'),message=document.getElementById('form-message');button.disabled=true;message.textContent='';message.className='';try{await api('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:document.getElementById('user-email').value,role:document.getElementById('user-role').value})});event.target.reset();message.textContent='Usuário adicionado.';message.className='success';await loadUsers()}catch(error){message.textContent=error.message;message.className='error'}finally{button.disabled=false}};
+loadUsers().catch(error=>{document.getElementById('user-list').innerHTML=`<div class="empty error">${escapeHtml(error.message)}</div>`});
+</script>{% endblock %}

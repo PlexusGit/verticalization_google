@@ -40,25 +40,30 @@ def test_only_configured_logo_is_served():
 def test_authenticated_templates_render_in_pt_br(monkeypatch):
     from app.routers import views
 
-    user = {"id": "test", "info": {"name": "Pessoa", "email": "pessoa@example.com"}}
+    user = {"id": "test", "info": {"name": "Pessoa", "email": "pessoa@example.com", "role": "admin"}}
     monkeypatch.setattr(views, "get_current_user", lambda _request: user)
+    monkeypatch.setattr(views, "request_is_admin", lambda _request: True)
     dashboard = client.get("/dashboard")
     detail = client.get("/video/v_test")
+    users = client.get("/users")
     assert dashboard.status_code == 200
     assert "Cortes verticais, com revisão humana" in dashboard.text
     assert detail.status_code == 200
     assert "Editor vertical" in detail.text
     assert 'src="/logo.svg"' in detail.text
     assert 'id="approve" disabled' in detail.text
+    assert users.status_code == 200
+    assert "Adicionar usuário" in users.text
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="Node.js is unavailable")
 def test_rendered_inline_javascript_is_syntactically_valid(monkeypatch):
     from app.routers import views
 
-    user = {"id": "test", "info": {"name": "Pessoa", "email": "pessoa@example.com"}}
+    user = {"id": "test", "info": {"name": "Pessoa", "email": "pessoa@example.com", "role": "admin"}}
     monkeypatch.setattr(views, "get_current_user", lambda _request: user)
-    pages = [client.get("/dashboard").text, client.get("/video/v_test").text]
+    monkeypatch.setattr(views, "request_is_admin", lambda _request: True)
+    pages = [client.get("/dashboard").text, client.get("/video/v_test").text, client.get("/users").text]
     for page in pages:
         scripts = [source for attrs, source in re.findall(r"<script([^>]*)>(.*?)</script>", page, re.DOTALL) if "src=" not in attrs]
         with tempfile.TemporaryDirectory() as directory:

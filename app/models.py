@@ -7,6 +7,20 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
+class AllowedUserInput(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    role: Literal["admin", "user"] = "user"
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        local, separator, domain = normalized.partition("@")
+        if not separator or not local or "." not in domain or domain.startswith(".") or domain.endswith("."):
+            raise ValueError("Informe um e-mail válido")
+        return normalized
+
+
 class VideoStatus(StrEnum):
     UPLOADING = "UPLOADING"
     TRANSCODING = "TRANSCODING"

@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.auth import get_current_user
+from app.auth import get_current_user, request_is_admin
 from app.config import settings
 
 router = APIRouter(tags=["views"])
@@ -28,6 +28,16 @@ async def dashboard(request: Request):
     if not user:
         return RedirectResponse("/", status_code=303)
     return request.app.state.templates.TemplateResponse(request, "dashboard.html", {"user": user})
+
+
+@router.get("/users", response_class=HTMLResponse)
+async def users(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse("/", status_code=303)
+    if not request_is_admin(request):
+        return RedirectResponse("/dashboard", status_code=303)
+    return request.app.state.templates.TemplateResponse(request, "users.html", {"user": user})
 
 
 @router.get("/video/{video_id}", response_class=HTMLResponse)

@@ -12,10 +12,10 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_query import FieldFilter
 from pydantic import ValidationError
 
-from app.auth import get_current_user, request_is_authenticated
+from app.auth import get_current_user, request_is_admin, request_is_authenticated
 from app.config import settings
 from app.db import get_db
-from app.models import ChapterInput, ImportGCSRequest, RenderRequest, VideoStatus
+from app.models import AllowedUserInput, ChapterInput, ImportGCSRequest, RenderRequest, VideoStatus
 from app.services import gemini, srt, storage
 from app.services.processing import (
     create_video_record,
@@ -35,6 +35,14 @@ def _unauthorized(request: Request) -> JSONResponse | None:
     if request_is_authenticated(request):
         return None
     return JSONResponse({"error": "Não autorizado"}, status_code=401)
+
+
+def _admin_forbidden(request: Request) -> JSONResponse | None:
+    if not get_current_user(request):
+        return JSONResponse({"error": "Não autorizado"}, status_code=401)
+    if not request_is_admin(request):
+        return JSONResponse({"error": "Acesso restrito a administradores"}, status_code=403)
+    return None
 
 
 def _serialize(value: Any) -> Any:
@@ -236,6 +244,48 @@ async def import_gcs(request: Request, background_tasks: BackgroundTasks):
     )
     background_tasks.add_task(process_video, video_id)
     return JSONResponse({"video_id": video_id, "status": VideoStatus.TRANSCODING.value, "created": True}, status_code=202)
+
+
+@router.get("/users")
+async def list_users(request: Request):
+    if response := _admin_forbidden(request):
+        return response
+    users = []
+    for document in get_db().collection(settings.ALLOWED_EMAILS_COLLECTION).stream():
+        data = document.to_dict() or {}
+        users.append(
+            {
+                "email": data.get("email") or document.id,
+                "role": data.get("role") or "admin",
+                "created_at": data.get("created_at"),
+                "created_by": data.get("created_by"),
+            }
+        )
+    return JSONResponse(_serialize({"users": sorted(users, key=lambda user: user["email"])}))
+
+
+@router.post("/users")
+async def create_user(request: Request):
+    if response := _admin_forbidden(request):
+        return response
+    try:
+        payload = AllowedUserInput.model_validate(await request.json())
+    except ValidationError as exc:
+        return JSONResponse({"error": exc.errors()}, status_code=422)
+    reference = get_db().collection(settings.ALLOWED_EMAILS_COLLECTION).document(payload.email)
+    if reference.get().exists:
+        return JSONResponse({"error": "Este usuário já está autorizado"}, status_code=409)
+    current_user = get_current_user(request) or {}
+    reference.set(
+        {
+            "email": payload.email,
+            "role": payload.role,
+            "created_by": (current_user.get("info") or {}).get("email", ""),
+            "created_at": firestore.SERVER_TIMESTAMP,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+    )
+    return JSONResponse({"email": payload.email, "role": payload.role}, status_code=201)
 
 
 @router.get("/videos")

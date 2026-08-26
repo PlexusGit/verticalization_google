@@ -35,4 +35,12 @@ class DB:
 
 def test_allowlist_prefers_normalized_document_id():
     assert auth.is_user_allowed(DB(True), "  USER@Example.COM ")
+    assert auth.get_allowed_user(DB(True), "USER@example.com")["role"] == "admin"
     assert not auth.is_user_allowed(DB(False), "missing@example.com")
+
+
+def test_admin_authorization_requires_admin_session_role():
+    request = SimpleNamespace(session={"user_id": "id", "user_info": {"role": "user"}})
+    assert not auth.request_is_admin(request)
+    request.session["user_info"]["role"] = "admin"
+    assert auth.request_is_admin(request)

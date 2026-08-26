@@ -1,7 +1,13 @@
 import pytest
 from pydantic import ValidationError
 
-from app.models import ChapterInput, ImportGCSRequest, RenderRequest
+from app.models import AllowedUserInput, ChapterInput, ImportGCSRequest, RenderRequest
+
+
+def test_allowed_user_normalizes_and_validates_email():
+    assert AllowedUserInput(email=" Person@Example.com ").email == "person@example.com"
+    with pytest.raises(ValidationError):
+        AllowedUserInput(email="not-an-email")
 
 
 def test_chapter_requires_forward_time_range():
