@@ -23,6 +23,11 @@ from app.services.srt import Cue, to_srt
 
 logger = logging.getLogger("plexus.chirp")
 ProgressCallback = Callable[[str, str, dict], None]
+INITIAL_BACKOFF_SECONDS = 5.0
+MAX_BACKOFF_SECONDS = 120.0
+MAX_ATTEMPTS_PER_CHUNK = 6
+POLL_INTERVAL_SECONDS = 30.0
+OPERATION_TIMEOUT_SECONDS = 50 * 60
 
 
 def _progress(callback: ProgressCallback | None, action: str, message: str, details: dict) -> None:
@@ -71,9 +76,10 @@ def _error_details(error: Exception) -> dict:
     return details
 
 
-def _retry_delay(error: Exception, fallback: float) -> float:
-    server_delay = _error_details(error).get("server_retry_delay_seconds", 0)
-    return max(float(server_delay or 0), fallback * random.uniform(0.8, 1.2))
+def _retry_delay(error: Exception, attempt: int) -> float:
+    server_delay = float(_error_details(error).get("server_retry_delay_seconds", 0) or 0)
+    exponential_delay = min(INITIAL_BACKOFF_SECONDS * 2 ** max(0, attempt - 1), MAX_BACKOFF_SECONDS)
+    return max(server_delay, exponential_delay * random.uniform(0.8, 1.2))
 
 
 def _client(location: str) -> SpeechClient:
@@ -102,15 +108,53 @@ def _request(location: str, uri: str) -> cloud_speech.BatchRecognizeRequest:
     )
 
 
+def _wait_for_operation(operation, callback: ProgressCallback | None, chunk_index: int, location: str):
+    operation_name = getattr(getattr(operation, "operation", None), "name", None)
+    deadline = time.monotonic() + OPERATION_TIMEOUT_SECONDS
+    poll_failures = 0
+    if not getattr(getattr(operation, "operation", None), "done", False):
+        time.sleep(POLL_INTERVAL_SECONDS)
+    while True:
+        try:
+            done = operation.done(retry=None)
+        except google_exceptions.ResourceExhausted as exc:
+            poll_failures += 1
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"Chirp 3 excedeu {OPERATION_TIMEOUT_SECONDS:.0f}s") from exc
+            delay = min(remaining, max(POLL_INTERVAL_SECONDS, _retry_delay(exc, poll_failures)))
+            _progress(
+                callback,
+                "chirp_poll_resource_exhausted",
+                f"Polling da operação Chirp 3 recebeu 429 em {location}; a mesma operação será consultada novamente",
+                {
+                    "chunk_index": chunk_index,
+                    "location": location,
+                    "operation_name": operation_name,
+                    "poll_failure_count": poll_failures,
+                    "retry_delay_seconds": round(delay, 2),
+                    **_error_details(exc),
+                },
+            )
+            time.sleep(delay)
+            continue
+        if done:
+            return operation.result(timeout=0, retry=None, polling=None)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f"Chirp 3 excedeu {OPERATION_TIMEOUT_SECONDS:.0f}s")
+        time.sleep(min(POLL_INTERVAL_SECONDS, remaining))
+
+
 def _recognize(uri: str, callback: ProgressCallback | None = None, chunk_index: int = 0):
     """Recognize one chunk with regional alternation and observable retries."""
 
     locations = [settings.CHIRP_LOCATION]
     if settings.CHIRP_FALLBACK_LOCATION not in locations:
         locations.append(settings.CHIRP_FALLBACK_LOCATION)
-    schedule = [(round_index, location) for round_index in range(3) for location in locations]
+    schedule = [locations[index % len(locations)] for index in range(MAX_ATTEMPTS_PER_CHUNK)]
     last_error: Exception | None = None
-    for attempt, (round_index, location) in enumerate(schedule, start=1):
+    for attempt, location in enumerate(schedule, start=1):
         started = time.monotonic()
         operation_name = None
         _progress(
@@ -128,7 +172,7 @@ def _recognize(uri: str, callback: ProgressCallback | None = None, chunk_index: 
         try:
             operation = _client(location).batch_recognize(request=_request(location, uri))
             operation_name = getattr(getattr(operation, "operation", None), "name", None)
-            response = operation.result(timeout=50 * 60)
+            response = _wait_for_operation(operation, callback, chunk_index, location)
             _progress(
                 callback,
                 "chirp_request_completed",
@@ -145,7 +189,7 @@ def _recognize(uri: str, callback: ProgressCallback | None = None, chunk_index: 
         except google_exceptions.ResourceExhausted as exc:
             last_error = exc
             will_retry = attempt < len(schedule)
-            delay = _retry_delay(exc, min(5 * 2**round_index, 30)) if will_retry else 0
+            delay = _retry_delay(exc, attempt) if will_retry else 0
             details = {
                 "chunk_index": chunk_index,
                 "location": location,
@@ -154,6 +198,8 @@ def _recognize(uri: str, callback: ProgressCallback | None = None, chunk_index: 
                 "elapsed_seconds": round(time.monotonic() - started, 2),
                 "retry_delay_seconds": round(delay, 2),
                 "will_retry": will_retry,
+                "next_location": schedule[attempt] if will_retry else None,
+                "backoff_exponent": attempt - 1,
                 **_error_details(exc),
             }
             _progress(

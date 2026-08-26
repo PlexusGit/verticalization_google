@@ -37,12 +37,19 @@ def test_primary_focus_prefers_continuity_between_distant_faces():
 
 
 def test_smoothing_ignores_head_movements_and_reacts_to_large_changes():
-    ignored = face_detection.smooth_focus((500, 500), (550, 500), 606)
-    moved = face_detection.smooth_focus((500, 500), (600, 500), 606)
+    ignored = face_detection.smooth_focus((500, 500), (600, 500), 606)
+    moved = face_detection.smooth_focus((500, 500), (700, 500), 606)
     cut = face_detection.smooth_focus((200, 500), (1200, 500), 606)
     assert ignored == (500, 500)
-    assert moved[0] == pytest.approx(534)
+    assert moved[0] == pytest.approx(568)
     assert cut[0] == pytest.approx(820)
+
+
+def test_average_focus_uses_only_recent_positions():
+    samples = []
+    assert face_detection.average_focus(samples, 0, (100, 200)) == (100, 200)
+    assert face_detection.average_focus(samples, 1, (120, 220)) == (110, 210)
+    assert face_detection.average_focus(samples, 4.1, (200, 300)) == (200, 300)
 
 
 def test_locked_face_does_not_switch_to_larger_distant_face():

@@ -16,7 +16,8 @@ MIN_SAMPLE_INTERVAL_SECONDS = 0.5
 MAX_ANALYSIS_WIDTH = 640
 FACE_HOLD_SECONDS = 10.0
 SWITCH_CONFIRM_SECONDS = 1.5
-MIN_FOCAL_CHANGE_RATIO = 0.10
+MIN_FOCAL_CHANGE_RATIO = 0.12
+FOCUS_AVERAGE_SECONDS = 5.0
 TRACK_MATCH_RATIO = 0.70
 SCENE_CUT_CORRELATION = 0.25
 
@@ -107,6 +108,21 @@ def smooth_focus(
         return previous
     alpha = 0.62 if force or distance > crop_width * 0.9 else 0.34
     return previous[0] + (target[0] - previous[0]) * alpha, previous[1] + (target[1] - previous[1]) * alpha
+
+
+def average_focus(
+    samples: list[tuple[float, float, float]],
+    timestamp: float,
+    target: tuple[float, float],
+    window_seconds: float = FOCUS_AVERAGE_SECONDS,
+) -> tuple[float, float]:
+    samples.append((timestamp, target[0], target[1]))
+    cutoff = timestamp - window_seconds
+    samples[:] = [sample for sample in samples if sample[0] >= cutoff]
+    return (
+        sum(sample[1] for sample in samples) / len(samples),
+        sum(sample[2] for sample in samples) / len(samples),
+    )
 
 
 def analysis_frame(frame: object) -> object:
@@ -210,6 +226,7 @@ def analyze_focal_points(
     tracker_seed_frame: object | None = None
     tracker_seed_face: Face | None = None
     previous_histogram: object | None = None
+    focus_samples: list[tuple[float, float, float]] = []
     keyframes: list[FocalPoint] = []
     timestamp = trim_start
     analyzed_frames = 0
@@ -235,12 +252,14 @@ def analyze_focal_points(
                 tracker = None
                 tracker_seed_frame = None
                 tracker_seed_face = None
+                focus_samples.clear()
                 scene_cuts += 1
 
             faces = detect_faces(detector, frame, source_width, source_height)
             locked_face = nearest_locked_face(faces, current_focus, crop_width)
             selected_face: Face | None = None
             target: tuple[float, float] | None = None
+            observed_target = False
 
             if current_focus is None and faces:
                 selected_face = select_primary_face(faces, None, source_width, source_height, crop_width)
@@ -249,6 +268,7 @@ def analyze_focal_points(
 
             if selected_face is not None:
                 target = face_focus(selected_face, crop_height, source_height)
+                observed_target = True
                 last_confirmed_time = timestamp
                 pending_focus = None
                 pending_since = None
@@ -264,6 +284,7 @@ def analyze_focal_points(
                     tracking_ok, tracker_box = tracker.update(analyzed)
                     if tracking_ok:
                         target = tracked_focus(tuple(float(value) for value in tracker_box), analyzed_width, analyzed_height, source_width, source_height, crop_height)
+                        observed_target = True
                         tracked_frames += 1
                     else:
                         tracker = None
@@ -279,6 +300,8 @@ def analyze_focal_points(
                         pending_focus = candidate_focus
                     if current_focus is None or pending_since is not None and timestamp - pending_since >= SWITCH_CONFIRM_SECONDS:
                         target = candidate_focus
+                        observed_target = True
+                        focus_samples.clear()
                         last_confirmed_time = timestamp
                         pending_focus = None
                         pending_since = None
@@ -287,11 +310,15 @@ def analyze_focal_points(
                             tracker_seed_frame = frame.copy()
                             tracker_seed_face = candidate_face
 
+            if observed_target and target is not None:
+                target = average_focus(focus_samples, timestamp, target)
+
             if target is None:
                 if current_focus is not None and last_confirmed_time is not None and timestamp - last_confirmed_time <= FACE_HOLD_SECONDS:
                     target = current_focus
                 else:
                     target = center
+                    focus_samples.clear()
 
             stabilized = smooth_focus(current_focus, target, crop_width, force=scene_cut)
             minimum_change = max(8, crop_width * MIN_FOCAL_CHANGE_RATIO)

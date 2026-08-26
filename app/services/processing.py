@@ -190,7 +190,7 @@ def process_video(video_id: str) -> None:
                     "transcription",
                     action,
                     message,
-                    level="ERROR" if action == "chirp_request_failed" else "WARNING" if action == "chirp_resource_exhausted" else "INFO",
+                    level="ERROR" if action == "chirp_request_failed" else "WARNING" if action in {"chirp_resource_exhausted", "chirp_poll_resource_exhausted"} else "INFO",
                     details=details,
                 ),
             )

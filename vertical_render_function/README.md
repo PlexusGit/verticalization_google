@@ -29,8 +29,8 @@ falha fechado quando não definido). Um corpo representativo é:
 
 `center_crop` usa o YuNet localmente para detectar rostos em frames amostrados,
 bloqueia a pessoa por continuidade e usa `TrackerMIL` sobre cabeça, ombros e
-torso quando o rosto desaparece. Uma zona morta de 10%, histerese de 1,5 segundo
-e detecção de mudança de cena reduzem oscilações. A análise processa no máximo
+torso quando o rosto desaparece. Uma média móvel de três segundos, zona morta
+de 20%, histerese de 1,5 segundo e detecção de mudança de cena reduzem oscilações. A análise processa no máximo
 240 frames por capítulo, compacta a trajetória para até 24 keyframes e não chama
 APIs externas. Sem detecção ou em caso de falha, o recorte volta ao centro.
 `split_stack` porta o modelo de keyframes top/bottom x/y independente do RPP,

@@ -38,6 +38,18 @@ def test_resource_exhausted_details_include_reason_quota_and_server_delay():
     assert details["server_retry_delay_seconds"] == 7
 
 
+def test_backoff_is_global_exponential_and_honors_retry_info(monkeypatch):
+    monkeypatch.setattr(chirp.random, "uniform", lambda _start, _end: 1)
+    server_delay = google_exceptions.ResourceExhausted(
+        "capacity",
+        details=[error_details_pb2.RetryInfo(retry_delay=duration_pb2.Duration(seconds=7))],
+    )
+    assert chirp._retry_delay(server_delay, 1) == 7
+    assert chirp._retry_delay(server_delay, 2) == 10
+    assert chirp._retry_delay(server_delay, 3) == 20
+    assert chirp._retry_delay(server_delay, 10) == 120
+
+
 def test_resource_exhausted_alternates_region_and_logs_operation(monkeypatch):
     response = object()
     calls = []
@@ -47,10 +59,14 @@ def test_resource_exhausted_alternates_region_and_logs_operation(monkeypatch):
     class Operation:
         def __init__(self, location):
             self.location = location
-            self.operation = SimpleNamespace(name=f"operations/{location}")
+            self.operation = SimpleNamespace(name=f"operations/{location}", done=True)
 
-        def result(self, timeout):
-            assert timeout == 50 * 60
+        def done(self, retry):
+            assert retry is None
+            return True
+
+        def result(self, timeout, retry, polling):
+            assert (timeout, retry, polling) == (0, None, None)
             if self.location == "us":
                 raise google_exceptions.ResourceExhausted("temporary capacity")
             return response
@@ -78,17 +94,60 @@ def test_resource_exhausted_alternates_region_and_logs_operation(monkeypatch):
     retry = next(details for action, _message, details in progress if action == "chirp_resource_exhausted")
     assert retry["operation_name"] == "operations/us"
     assert retry["will_retry"] is True
+    assert retry["next_location"] == "eu"
+    assert retry["backoff_exponent"] == 0
     completed = next(details for action, _message, details in progress if action == "chirp_request_completed")
     assert completed["operation_name"] == "operations/eu"
 
 
-def test_final_resource_exhausted_emits_failure_event(monkeypatch):
+def test_polling_429_reuses_the_same_operation_with_controlled_intervals(monkeypatch):
+    response = object()
+    sleeps = []
     progress = []
 
     class Operation:
-        operation = SimpleNamespace(name="operations/failed")
+        operation = SimpleNamespace(name="operations/same", done=False)
 
-        def result(self, timeout):
+        def __init__(self):
+            self.polls = 0
+            self.result_calls = 0
+
+        def done(self, retry):
+            self.polls += 1
+            if self.polls <= 2:
+                raise google_exceptions.ResourceExhausted("poll capacity")
+            return True
+
+        def result(self, timeout, retry, polling):
+            self.result_calls += 1
+            return response
+
+    operation = Operation()
+    monkeypatch.setattr(chirp.random, "uniform", lambda _start, _end: 1)
+    monkeypatch.setattr(chirp.time, "sleep", sleeps.append)
+
+    result = chirp._wait_for_operation(operation, lambda *args: progress.append(args), 0, "us")
+
+    assert result is response
+    assert operation.polls == 3
+    assert operation.result_calls == 1
+    assert sleeps == [30, 30, 30]
+    poll_events = [details for action, _message, details in progress if action == "chirp_poll_resource_exhausted"]
+    assert len(poll_events) == 2
+    assert all(details["operation_name"] == "operations/same" for details in poll_events)
+
+
+def test_final_resource_exhausted_emits_failure_event(monkeypatch):
+    progress = []
+    sleeps = []
+
+    class Operation:
+        operation = SimpleNamespace(name="operations/failed", done=True)
+
+        def done(self, retry):
+            return True
+
+        def result(self, timeout, retry, polling):
             raise google_exceptions.ResourceExhausted("temporary capacity")
 
     client = SimpleNamespace(batch_recognize=lambda request: Operation())
@@ -96,12 +155,13 @@ def test_final_resource_exhausted_emits_failure_event(monkeypatch):
     monkeypatch.setattr(chirp.settings, "CHIRP_FALLBACK_LOCATION", "eu")
     monkeypatch.setattr(chirp, "_client", lambda _location: client)
     monkeypatch.setattr(chirp.random, "uniform", lambda _start, _end: 1)
-    monkeypatch.setattr(chirp.time, "sleep", lambda _delay: None)
+    monkeypatch.setattr(chirp.time, "sleep", sleeps.append)
 
     with pytest.raises(google_exceptions.ResourceExhausted):
         chirp._recognize("gs://bucket/audio.flac", lambda *args: progress.append(args))
 
     attempts = [details for action, _message, details in progress if action == "chirp_request_started"]
     assert [details["location"] for details in attempts] == ["us", "eu", "us", "eu", "us", "eu"]
+    assert sleeps == [5, 10, 20, 40, 80]
     assert progress[-1][0] == "chirp_request_failed"
     assert progress[-1][2]["attempt_count"] == 6

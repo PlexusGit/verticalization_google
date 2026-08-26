@@ -140,7 +140,9 @@ O foco vertical recebe um deslocamento de 12% da altura do crop. Na prática, is
 
 ## 5. Estabilidade e suavização
 
-O foco não salta diretamente para cada nova detecção. Uma zona morta ignora deslocamentos inferiores a 10% da largura do crop, com mínimo de 8 pixels. Isso evita keyframes provocados por pequenos movimentos da cabeça, oscilações do detector ou mudanças de expressão.
+O foco não salta diretamente para cada nova detecção. As posições observadas da mesma pessoa bloqueada, inclusive as fornecidas pelo tracker corporal, são acumuladas em uma janela móvel de três segundos. O alvo usado pelo enquadramento é a média X/Y dessa sequência. A janela é reiniciada em mudanças de cena, troca confirmada de pessoa ou retorno ao fallback central.
+
+Depois da média, uma zona morta ignora deslocamentos inferiores a 20% da largura do crop, com mínimo de 8 pixels. Isso evita keyframes provocados por pequenos movimentos da cabeça, oscilações do detector ou mudanças de expressão.
 
 Quando o alvo supera a zona morta, o algoritmo aplica 34% da diferença entre a posição atual e o novo alvo. Para mudanças maiores que 90% da largura do crop ou mudanças de cena, aplica 62%, permitindo uma resposta mais rápida.
 
@@ -148,7 +150,7 @@ Um novo keyframe é criado somente quando:
 
 - é o primeiro foco do capítulo;
 - ocorre uma mudança de cena; ou
-- o foco estabilizado se afasta pelo menos 10% da largura do crop do último keyframe emitido.
+- o foco estabilizado se afasta pelo menos 20% da largura do crop do último keyframe emitido.
 
 ### Bloqueio e histerese
 
@@ -342,7 +344,9 @@ Detectar rostos localmente com YuNet
         ↓
 Bloquear a pessoa por proximidade e continuidade
         ↓
-Ignorar movimentos menores que 10% do crop
+Calcular a média móvel de três segundos
+        ↓
+Ignorar movimentos menores que 20% do crop
         ↓
 Exigir 1,5 segundo para trocar de candidato
         ↓
