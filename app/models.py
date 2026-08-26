@@ -154,6 +154,7 @@ class RenderRequest(BaseModel):
     layout_mode: Literal["center_crop", "split_stack"] = "center_crop"
     keyframes_top: list[CropKeyframe] = Field(default_factory=list, max_length=200)
     keyframes_bottom: list[CropKeyframe] = Field(default_factory=list, max_length=200)
+    automatic_focal_points: list[CropKeyframe] = Field(default_factory=list, max_length=241)
     caption_style: CaptionStyle = Field(default_factory=CaptionStyle)
     branding: BrandingOptions = Field(default_factory=BrandingOptions)
     final: bool = False

@@ -1,4 +1,5 @@
 """Small real-FFmpeg smoke test; skipped on machines without media tools."""
+import dataclasses
 import json
 import shutil
 import subprocess
@@ -36,6 +37,9 @@ def test_real_render_has_vertical_dimensions(tmp_path, mode):
             "video_resolution": {"w": 320, "h": 180},
         }
     )
+    if mode == "center_crop":
+        points = tuple({"time": index * .003, "x": 80 + index % 2 * 160, "y": 90} for index in range(100))
+        spec = dataclasses.replace(spec, automatic_focal_points=points)
     renderer.render(spec, str(source), str(output), timeout=60)
     probe = subprocess.run(
         [

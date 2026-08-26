@@ -186,7 +186,12 @@ def process_video(video_id: str) -> None:
             subtitle_text = chirp.transcribe_chunks(
                 audio_chunks,
                 callback=lambda action, message, details: events.record(
-                    video_id, "transcription", action, message, details=details
+                    video_id,
+                    "transcription",
+                    action,
+                    message,
+                    level="ERROR" if action == "chirp_request_failed" else "WARNING" if action == "chirp_resource_exhausted" else "INFO",
+                    details=details,
                 ),
             )
             srt_path = f"{video_id}/{video_id}.srt"
@@ -394,6 +399,7 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
         "mode": persisted_options.get("layout_mode", "center_crop"),
         "keyframes_top": persisted_options.get("keyframes_top") or [],
         "keyframes_bottom": persisted_options.get("keyframes_bottom") or [],
+        "automatic_focal_points": persisted_options.get("automatic_focal_points") or [],
         "captions": captions,
         "caption_style": {
             "font": caption_style.get("font", settings.DEFAULT_CAPTION_FONT),
@@ -408,6 +414,9 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
     }
     try:
         result = vertical_render.submit(payload)
+        detected_points = result.get("automatic_focal_points") or persisted_options.get("automatic_focal_points") or []
+        if detected_points:
+            persisted_options["automatic_focal_points"] = detected_points
         output_path = result.get("gcs_path") or result.get("output_gcs_path") or target
         managed_prefix = f"gs://{settings.BUCKET_NAME}/"
         if output_path.startswith(managed_prefix):
@@ -416,6 +425,7 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
             {
                 "status": "COMPLETED",
                 "gcs_path": output_path,
+                "options": persisted_options,
                 "completed_at": firestore.SERVER_TIMESTAMP,
                 "updated_at": firestore.SERVER_TIMESTAMP,
             }
@@ -425,6 +435,7 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
                 f"{kind}_status": "COMPLETED",
                 f"{kind}_gcs_path": output_path,
                 f"{kind}_render_id": render_id,
+                "render_options": persisted_options,
                 "updated_at": firestore.SERVER_TIMESTAMP,
             }
         )

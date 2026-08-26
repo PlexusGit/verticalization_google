@@ -1,3 +1,4 @@
+import dataclasses
 from pathlib import Path
 from unittest.mock import patch
 
@@ -27,10 +28,45 @@ def test_validation_defaults_to_center_crop_and_rejects_unsafe_paths():
         renderer.validate_request(payload(source_gcs_path="../secret"))
     with pytest.raises(renderer.ValidationError, match="trim_end"):
         renderer.validate_request(payload(trim_end=10))
+    with pytest.raises(renderer.ValidationError, match="at most 241"):
+        renderer.validate_request(payload(automatic_focal_points=[{"time": 10, "x": 1, "y": 1}] * 242))
 
 
-def test_focal_strategy_is_documented_center():
+def test_focal_strategy_falls_back_to_center_and_interpolates_faces():
     assert renderer.select_automatic_focal_point(12.5, 1920, 1080) == (960, 540)
+    points = ({"time": 10, "x": 400, "y": 500}, {"time": 12, "x": 800, "y": 600})
+    assert renderer.select_automatic_focal_point(12, 1920, 1080, points) == (800, 600)
+
+
+def test_automatic_focal_points_create_dynamic_clamped_crop():
+    spec = dataclasses.replace(
+        renderer.validate_request(payload()),
+        automatic_focal_points=(
+            {"time": 10, "x": 400, "y": 540},
+            {"time": 12, "x": 1400, "y": 540},
+        ),
+    )
+    graph, _ = renderer.build_video_filter(spec, None, None)
+    assert "crop=606:1080" in graph
+    assert "max(0,min(1314" in graph
+    assert "cos(PI*" in graph
+
+
+def test_focal_trajectory_compaction_preserves_endpoints_and_large_changes():
+    points = tuple({"time": index, "x": float(index), "y": 0.0} for index in range(100))
+    points = points[:50] + ({"time": 50, "x": 500.0, "y": 0.0},) + points[51:]
+    compacted = renderer.compact_keyframes(points)
+    assert len(compacted) == 24
+    assert compacted[0] == points[0]
+    assert compacted[-1] == points[-1]
+    assert {"time": 50, "x": 500.0, "y": 0.0} in compacted
+
+
+def test_many_focal_points_do_not_generate_an_oversized_expression():
+    points = tuple({"time": 10 + index, "x": 400 + index * 5, "y": 540} for index in range(100))
+    spec = dataclasses.replace(renderer.validate_request(payload(trim_end=110)), automatic_focal_points=points)
+    graph, _ = renderer.build_video_filter(spec, None, None)
+    assert graph.count("if(") <= 92
 
 
 def test_rpp_easing_holds_then_cosine_interpolates():

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import random
 import time
 from typing import Callable
 
@@ -15,6 +16,7 @@ from google.api_core import exceptions as google_exceptions
 from google.api_core.client_options import ClientOptions
 from google.cloud.speech_v2 import SpeechClient
 from google.cloud.speech_v2.types import cloud_speech
+from google.rpc import error_details_pb2
 
 from app.config import settings
 from app.services.srt import Cue, to_srt
@@ -41,6 +43,37 @@ def _seconds(duration) -> float:
     seconds = float(getattr(duration, "seconds", 0) or 0)
     nanos = float(getattr(duration, "nanos", 0) or 0)
     return seconds + nanos / 1_000_000_000
+
+
+def _error_details(error: Exception) -> dict:
+    details = {
+        "error_type": type(error).__name__,
+        "status_code": getattr(error, "code", None),
+        "error_message": str(error)[:2000],
+    }
+    quota_violations = []
+    for item in getattr(error, "details", None) or []:
+        if isinstance(item, error_details_pb2.ErrorInfo):
+            details.update({
+                "reason": item.reason,
+                "domain": item.domain,
+                "metadata": dict(item.metadata),
+            })
+        elif isinstance(item, error_details_pb2.QuotaFailure):
+            quota_violations.extend(
+                {"subject": violation.subject, "description": violation.description}
+                for violation in item.violations
+            )
+        elif isinstance(item, error_details_pb2.RetryInfo):
+            details["server_retry_delay_seconds"] = _seconds(item.retry_delay)
+    if quota_violations:
+        details["quota_violations"] = quota_violations
+    return details
+
+
+def _retry_delay(error: Exception, fallback: float) -> float:
+    server_delay = _error_details(error).get("server_retry_delay_seconds", 0)
+    return max(float(server_delay or 0), fallback * random.uniform(0.8, 1.2))
 
 
 def _client(location: str) -> SpeechClient:
@@ -70,50 +103,96 @@ def _request(location: str, uri: str) -> cloud_speech.BatchRecognizeRequest:
 
 
 def _recognize(uri: str, callback: ProgressCallback | None = None, chunk_index: int = 0):
-    """Recognize one chunk, logging attempts and regional fallback."""
+    """Recognize one chunk with regional alternation and observable retries."""
 
     locations = [settings.CHIRP_LOCATION]
     if settings.CHIRP_FALLBACK_LOCATION not in locations:
         locations.append(settings.CHIRP_FALLBACK_LOCATION)
+    schedule = [(round_index, location) for round_index in range(3) for location in locations]
     last_error: Exception | None = None
-    for location in locations:
-        delay = 3
-        for attempt in range(1, 6):
-            started = time.monotonic()
+    for attempt, (round_index, location) in enumerate(schedule, start=1):
+        started = time.monotonic()
+        operation_name = None
+        _progress(
+            callback,
+            "chirp_request_started",
+            f"Enviando trecho {chunk_index + 1} ao Chirp 3 em {location}",
+            {
+                "chunk_index": chunk_index,
+                "location": location,
+                "attempt": attempt,
+                "model": "chirp_3",
+                "api_version": "v2",
+            },
+        )
+        try:
+            operation = _client(location).batch_recognize(request=_request(location, uri))
+            operation_name = getattr(getattr(operation, "operation", None), "name", None)
+            response = operation.result(timeout=50 * 60)
             _progress(
                 callback,
-                "chirp_request_started",
-                f"Enviando trecho {chunk_index + 1} ao Chirp 3 em {location}",
-                {"chunk_index": chunk_index, "location": location, "attempt": attempt},
+                "chirp_request_completed",
+                f"Chirp 3 concluiu o trecho {chunk_index + 1}",
+                {
+                    "chunk_index": chunk_index,
+                    "location": location,
+                    "attempt": attempt,
+                    "operation_name": operation_name,
+                    "elapsed_seconds": round(time.monotonic() - started, 2),
+                },
             )
-            try:
-                operation = _client(location).batch_recognize(request=_request(location, uri))
-                response = operation.result(timeout=50 * 60)
-                _progress(
-                    callback,
-                    "chirp_request_completed",
-                    f"Chirp 3 concluiu o trecho {chunk_index + 1}",
-                    {
-                        "chunk_index": chunk_index,
-                        "location": location,
-                        "attempt": attempt,
-                        "elapsed_seconds": round(time.monotonic() - started, 2),
-                    },
-                )
-                return response
-            except google_exceptions.ResourceExhausted as exc:
-                last_error = exc
-                _progress(
-                    callback,
-                    "chirp_quota_retry",
-                    f"Quota esgotada em {location}; nova tentativa será feita",
-                    {"chunk_index": chunk_index, "location": location, "attempt": attempt, "retry_delay_seconds": delay},
-                )
-                if attempt == 5:
-                    break
+            return response
+        except google_exceptions.ResourceExhausted as exc:
+            last_error = exc
+            will_retry = attempt < len(schedule)
+            delay = _retry_delay(exc, min(5 * 2**round_index, 30)) if will_retry else 0
+            details = {
+                "chunk_index": chunk_index,
+                "location": location,
+                "attempt": attempt,
+                "operation_name": operation_name,
+                "elapsed_seconds": round(time.monotonic() - started, 2),
+                "retry_delay_seconds": round(delay, 2),
+                "will_retry": will_retry,
+                **_error_details(exc),
+            }
+            _progress(
+                callback,
+                "chirp_resource_exhausted",
+                f"Speech-to-Text retornou 429 em {location}; " + ("alternando região após espera" if will_retry else "tentativas encerradas"),
+                details,
+            )
+            if will_retry:
                 time.sleep(delay)
-                delay = min(delay * 2, 30)
-    raise last_error or RuntimeError("Chirp 3 não retornou uma resposta")
+        except Exception as exc:
+            _progress(
+                callback,
+                "chirp_request_failed",
+                f"Speech-to-Text falhou em {location}",
+                {
+                    "chunk_index": chunk_index,
+                    "location": location,
+                    "attempt": attempt,
+                    "operation_name": operation_name,
+                    "elapsed_seconds": round(time.monotonic() - started, 2),
+                    **_error_details(exc),
+                },
+            )
+            raise
+    if last_error:
+        _progress(
+            callback,
+            "chirp_request_failed",
+            f"Chirp 3 não conseguiu transcrever o trecho {chunk_index + 1} após alternar regiões",
+            {
+                "chunk_index": chunk_index,
+                "attempt_count": len(schedule),
+                "locations": locations,
+                **_error_details(last_error),
+            },
+        )
+        raise last_error
+    raise RuntimeError("Chirp 3 não retornou uma resposta")
 
 
 def _result_cues(results, offset: float) -> list[Cue]:

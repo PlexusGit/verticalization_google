@@ -12,7 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-COPY main.py renderer.py ./
+COPY main.py renderer.py face_detection.py ./
+COPY models ./models
 
 # Cloud Run injects PORT. One worker per container prevents a single render from
 # oversubscribing CPU; Cloud Run concurrency is also pinned to one in deploy.sh.

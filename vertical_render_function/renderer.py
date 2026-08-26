@@ -20,6 +20,7 @@ OUTPUT_HEIGHT = 1920
 TRANSITION_SECONDS = 2.0
 MAX_CAPTIONS = 2_000
 MAX_KEYFRAMES = 10_000
+MAX_EXPRESSION_KEYFRAMES = 24
 _COLOR_RE = re.compile(r"^(?:#[0-9a-fA-F]{6}|[a-zA-Z]{1,24})$")
 
 
@@ -38,6 +39,7 @@ class RenderSpec:
     source_height: int
     keyframes_top: tuple[dict[str, float], ...] = ()
     keyframes_bottom: tuple[dict[str, float], ...] = ()
+    automatic_focal_points: tuple[dict[str, float], ...] = ()
     captions: tuple[dict[str, Any], ...] = ()
     caption_style: Mapping[str, Any] = dataclasses.field(default_factory=dict)
     logo: Mapping[str, Any] | None = None
@@ -69,11 +71,11 @@ def _gcs_path(value: Any, name: str) -> str:
     return value
 
 
-def _keyframes(raw: Any, name: str) -> tuple[dict[str, float], ...]:
+def _keyframes(raw: Any, name: str, maximum: int = MAX_KEYFRAMES) -> tuple[dict[str, float], ...]:
     if raw is None:
         return ()
-    if not isinstance(raw, list) or len(raw) > MAX_KEYFRAMES:
-        raise ValidationError(f"{name} must be a list with at most {MAX_KEYFRAMES} entries")
+    if not isinstance(raw, list) or len(raw) > maximum:
+        raise ValidationError(f"{name} must be a list with at most {maximum} entries")
     result = []
     for index, item in enumerate(raw):
         if not isinstance(item, dict):
@@ -146,6 +148,7 @@ def validate_request(payload: Any) -> RenderSpec:
         source_height=height,
         keyframes_top=_keyframes(payload.get("keyframes_top"), "keyframes_top"),
         keyframes_bottom=_keyframes(payload.get("keyframes_bottom"), "keyframes_bottom"),
+        automatic_focal_points=_keyframes(payload.get("automatic_focal_points"), "automatic_focal_points", 241),
         captions=tuple(captions),
         caption_style=style,
         logo=logo,
@@ -153,15 +156,17 @@ def validate_request(payload: Any) -> RenderSpec:
     )
 
 
-def select_automatic_focal_point(_time_seconds: float, width: int, height: int) -> tuple[float, float]:
-    """Return the automatic crop focal point in source pixels.
-
-    This is deliberately the single insertion point for a future active-speaker
-    detector.  TODO: feed face tracks plus diarization confidence into this
-    function and smooth speaker changes; until then horizontal/vertical center is
-    deterministic and avoids pretending that a heuristic is speaker detection.
-    """
-    return width / 2.0, height / 2.0
+def select_automatic_focal_point(
+    time_seconds: float,
+    width: int,
+    height: int,
+    focal_points: Sequence[Mapping[str, float]] = (),
+) -> tuple[float, float]:
+    """Retorna o foco facial interpolado ou o centro determinístico."""
+    return (
+        eased_value(time_seconds, focal_points, "x", width / 2.0),
+        eased_value(time_seconds, focal_points, "y", height / 2.0),
+    )
 
 
 def eased_value(time_seconds: float, frames: Sequence[Mapping[str, float]], field: str, default: float) -> float:
@@ -184,6 +189,30 @@ def eased_value(time_seconds: float, frames: Sequence[Mapping[str, float]], fiel
             eased = 0.5 * (1 - math.cos(math.pi * progress))
             return float(left[field] + (right[field] - left[field]) * eased)
     return default
+
+
+def compact_keyframes(
+    frames: Sequence[Mapping[str, float]],
+    maximum: int = MAX_EXPRESSION_KEYFRAMES,
+) -> tuple[dict[str, float], ...]:
+    """Preserva as maiores mudanças da trajetória dentro do limite do parser FFmpeg."""
+    compacted = [dict(frame) for frame in sorted(frames, key=lambda frame: frame["time"])]
+    while len(compacted) > maximum:
+        removable_index, smallest_error = 1, math.inf
+        for index in range(1, len(compacted) - 1):
+            left, current, right = compacted[index - 1], compacted[index], compacted[index + 1]
+            time_span = right["time"] - left["time"]
+            if time_span <= 0:
+                error = 0.0
+            else:
+                progress = (current["time"] - left["time"]) / time_span
+                expected_x = left["x"] + (right["x"] - left["x"]) * progress
+                expected_y = left["y"] + (right["y"] - left["y"]) * progress
+                error = math.hypot(current["x"] - expected_x, current["y"] - expected_y)
+            if error < smallest_error:
+                removable_index, smallest_error = index, error
+        compacted.pop(removable_index)
+    return tuple(compacted)
 
 
 def keyframe_expression(trim_start: float, duration: float, frames: Sequence[Mapping[str, float]], field: str, default: float) -> str:
@@ -236,10 +265,18 @@ def build_video_filter(spec: RenderSpec, ass_path: str | None, logo_input_index:
         else:
             crop_width = spec.source_width - spec.source_width % 2
             crop_height = int(crop_width / target_aspect) // 2 * 2
-        focal_x, focal_y = select_automatic_focal_point(0, spec.source_width, spec.source_height)
-        crop_x = max(0, min(spec.source_width - crop_width, focal_x - crop_width / 2))
-        crop_y = max(0, min(spec.source_height - crop_height, focal_y - crop_height / 2))
-        filters = [f"[0:v]crop={crop_width}:{crop_height}:{crop_x:g}:{crop_y:g},scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}[v0]"]
+        focal_points = compact_keyframes(spec.automatic_focal_points)
+        focal_x, focal_y = select_automatic_focal_point(spec.trim_start, spec.source_width, spec.source_height, focal_points)
+        if focal_points:
+            x = keyframe_expression(spec.trim_start, spec.duration, focal_points, "x", focal_x)
+            y = keyframe_expression(spec.trim_start, spec.duration, focal_points, "y", focal_y)
+            safe_x = f"max(0,min({spec.source_width-crop_width},({x})-{crop_width/2:g}))"
+            safe_y = f"max(0,min({spec.source_height-crop_height},({y})-{crop_height/2:g}))"
+            filters = [f"[0:v]crop={crop_width}:{crop_height}:'{safe_x}':'{safe_y}',scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}[v0]"]
+        else:
+            crop_x = max(0, min(spec.source_width - crop_width, focal_x - crop_width / 2))
+            crop_y = max(0, min(spec.source_height - crop_height, focal_y - crop_height / 2))
+            filters = [f"[0:v]crop={crop_width}:{crop_height}:{crop_x:g}:{crop_y:g},scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}[v0]"]
     else:
         crop_w = min(spec.source_width, int(spec.source_height * 9 / 16))
         crop_w -= crop_w % 2

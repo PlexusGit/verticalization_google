@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hmac
 import logging
 import os
@@ -14,7 +15,8 @@ from urllib.parse import urlparse
 import functions_framework
 from google.cloud import firestore, storage
 
-from renderer import RenderSpec, ValidationError, render, validate_request, write_ass_captions
+from face_detection import analyze_focal_points
+from renderer import RenderSpec, ValidationError, compact_keyframes, render, validate_request, write_ass_captions
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -105,6 +107,25 @@ def _upload(gcs_path: str, source: str) -> str:
     return f"gs://{bucket}/{blob}"
 
 
+def _add_automatic_focus(spec: RenderSpec, source_path: str) -> RenderSpec:
+    if spec.mode != "center_crop":
+        return spec
+    if spec.automatic_focal_points:
+        return dataclasses.replace(spec, automatic_focal_points=compact_keyframes(spec.automatic_focal_points))
+    try:
+        points = analyze_focal_points(
+            source_path,
+            spec.trim_start,
+            spec.trim_end,
+            spec.source_width,
+            spec.source_height,
+        )
+        return dataclasses.replace(spec, automatic_focal_points=compact_keyframes(points))
+    except Exception:
+        logger.exception("A análise facial falhou; usando recorte central")
+        return spec
+
+
 @functions_framework.http
 def vertical_render(request: Any):
     """Authenticate, fetch assets, render, upload, update status, and clean up."""
@@ -142,6 +163,7 @@ def vertical_render(request: Any):
             ass_path = str(Path(workdir) / "captions.ass") if spec.captions else None
             logo_path = str(Path(workdir) / "logo") if spec.logo else None
             _download(spec.source_gcs_path, source_path)
+            spec = _add_automatic_focus(spec, source_path)
             if ass_path:
                 write_ass_captions(spec, ass_path)
             if logo_path and spec.logo:
@@ -150,7 +172,7 @@ def vertical_render(request: Any):
             output_uri = _upload(spec.output_gcs_path, output_path)
 
         update_status(video_id, render_id, chapter_id, "COMPLETED", output_gcs_path=output_uri, completed_at=firestore.SERVER_TIMESTAMP, error=firestore.DELETE_FIELD)
-        return ({"status": "COMPLETED", "video_id": video_id, "render_id": render_id, "chapter_id": chapter_id, "output_gcs_path": output_uri, "width": 1080, "height": 1920}, 200, _cors_headers())
+        return ({"status": "COMPLETED", "video_id": video_id, "render_id": render_id, "chapter_id": chapter_id, "output_gcs_path": output_uri, "width": 1080, "height": 1920, "automatic_focal_points": list(spec.automatic_focal_points)}, 200, _cors_headers())
     except ValidationError as exc:
         # Some style values are validated while assembling the filter graph.
         update_status(video_id, render_id, chapter_id, "ERROR", error=str(exc))

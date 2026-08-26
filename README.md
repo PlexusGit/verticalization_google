@@ -10,7 +10,7 @@ A interface está em português brasileiro, é responsiva e usa somente a marca 
 - Normalização H.264/AAC em Cloud Run, com NVIDIA L4/NVENC opcional e fallback para CPU.
 - Transcrição `pt-BR` com Speech-to-Text v2 / Chirp 3 ou SRT fornecido pelo usuário.
 - Sugestão de capítulos e ganchos com saída estruturada do Gemini.
-- Rascunho vertical automático com recorte 9:16 no centro horizontal.
+- Rascunho vertical automático com detecção facial local, rastreamento suave e fallback central.
 - Editor de capítulos, limites, legendas estáticas, logo e texto de marca.
 - Templates reutilizáveis de logo e título, selecionáveis por capítulo antes da aprovação.
 - Reenquadramento manual no modelo RPP: duas áreas independentes, empilhadas, com quadros-chave.
@@ -18,7 +18,7 @@ A interface está em português brasileiro, é responsiva e usa somente a marca 
 - Login Google com allowlist de e-mails no Firestore e API key para automação.
 - Funções Pub/Sub opcionais para importar objetos de GCS e S3.
 
-> **Sobre active speaker tracking:** esta versão não afirma detectar o locutor ativo. O enquadramento automático é central e determinístico. A função `select_automatic_focal_point()` em `vertical_render_function/renderer.py` é o ponto de extensão documentado para uma futura implementação baseada em rostos, diarização ou modelo audiovisual.
+> **Sobre active speaker tracking:** o enquadramento automático detecta e acompanha o rosto principal, mas não afirma identificar quem está falando. A seleção prioriza continuidade, tamanho, confiança e centralidade. Atividade labial ou diarização podem ser combinadas futuramente.
 
 ## Arquitetura
 
@@ -337,7 +337,7 @@ A função baixa para arquivo temporário, envia ao GCS usando precondição de 
 
 ### `center_crop`
 
-Escala preservando proporção e corta o centro para 1080 × 1920. É o padrão automático.
+Detecta rostos localmente com YuNet, seleciona o foco principal com continuidade temporal e gera um recorte 1080 × 1920 animado por keyframes. Se nenhum rosto for encontrado ou a análise falhar, usa o centro da imagem.
 
 ### `split_stack`
 
@@ -363,16 +363,11 @@ Entradas são validadas, nomes são saneados e FFmpeg é executado com array de 
 - Background tasks persistem checkpoints, mas ainda dependem do ciclo de vida da instância. Uma evolução natural é mover a orquestração para Cloud Tasks/Pub/Sub sem alterar workers.
 - Revise permissões IAM para políticas organizacionais específicas antes de produção.
 
-## Extensão de foco automático
+## Foco automático
 
-O contrato futuro deve produzir um foco `(x, y)` por tempo. Implemente a estratégia em:
+O worker amostra no máximo 240 frames de cada capítulo e executa o YuNet localmente, sem API de visão ou cobrança por imagem. Uma zona morta de 10% ignora movimentos pequenos da cabeça; histerese de 1,5 segundo evita trocas ocasionais de pessoa. Quando o rosto desaparece, o `TrackerMIL` acompanha uma região expandida de cabeça, ombros e torso, com retenção de até dez segundos se o tracker falhar e reinicialização em mudanças de cena. Os focos `(x, y)` são compactados para até 24 keyframes, persistidos no rascunho e reutilizados no render final.
 
-```text
-vertical_render_function/renderer.py
-select_automatic_focal_point(time_seconds, width, height)
-```
-
-Uma implementação robusta pode combinar rastreamento facial, atividade labial, diarização e suavização temporal. Não acople o modelo ao HTTP handler: mantenha a estratégia testável e retorne quadros-chave que o renderer já sabe interpolar.
+A implementação fica isolada em `vertical_render_function/face_detection.py`. O modelo YuNet incluído em `vertical_render_function/models/` vem do OpenCV Zoo e mantém sua licença MIT no mesmo diretório. O renderer continua responsável apenas pela interpolação e composição. Uma evolução futura pode combinar atividade labial ou diarização sem trocar o contrato de keyframes.
 
 ## Licença
 

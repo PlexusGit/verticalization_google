@@ -27,12 +27,16 @@ falha fechado quando não definido). Um corpo representativo é:
 }
 ```
 
-`center_crop` usa o centro horizontal. A função documentada
-`select_automatic_focal_point` em `renderer.py` é o ponto de integração futuro
-para o detector de locutor ativo. `split_stack` porta o modelo de keyframes
-top/bottom x/y independente do RPP, incluindo easing de cosseno e limitação de
-crop. Tempos de legenda e tempos de keyframe são tempos absolutos da mídia de
-origem.
+`center_crop` usa o YuNet localmente para detectar rostos em frames amostrados,
+bloqueia a pessoa por continuidade e usa `TrackerMIL` sobre cabeça, ombros e
+torso quando o rosto desaparece. Uma zona morta de 10%, histerese de 1,5 segundo
+e detecção de mudança de cena reduzem oscilações. A análise processa no máximo
+240 frames por capítulo, compacta a trajetória para até 24 keyframes e não chama
+APIs externas. Sem detecção ou em caso de falha, o recorte volta ao centro.
+`split_stack` porta o modelo de keyframes top/bottom x/y independente do RPP,
+incluindo easing de cosseno e limitação de crop. Tempos de legenda e tempos de
+keyframe são tempos absolutos da mídia de origem. O modelo YuNet vem do OpenCV
+Zoo; sua licença MIT está preservada em `models/LICENSE`.
 
 Os caminhos no Firestore são `COLLECTION_VIDEOS/{video_id}/renders/{render_id}`
 e, quando fornecido, `COLLECTION_VIDEOS/{video_id}/chapters/{chapter_id}`. Os

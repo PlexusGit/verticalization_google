@@ -53,6 +53,7 @@ def test_authenticated_templates_render_in_pt_br(monkeypatch):
     assert "video.currentTime=Math.min(1" in dashboard.text
     assert detail.status_code == 200
     assert "Editor vertical" in detail.text
+    assert "Foco automático em rostos" in detail.text
     assert 'src="/logo.svg"' in detail.text
     assert 'id="approve" disabled' in detail.text
     assert 'class="chapters-review-layout"' in detail.text

@@ -86,8 +86,8 @@ def test_render_payload_converts_template_percentages_to_pixels(monkeypatch):
         def set(self, _data):
             return None
 
-        def update(self, _data):
-            return None
+        def update(self, data):
+            self.data.update(data)
 
         def collection(self, _name):
             return self
@@ -102,7 +102,7 @@ def test_render_payload_converts_template_percentages_to_pixels(monkeypatch):
     video_document.document = lambda _chapter_id: chapter_document
     captured = {}
     monkeypatch.setattr(processing, "_video_ref", lambda _video_id: video_document)
-    monkeypatch.setattr(processing.vertical_render, "submit", lambda payload: captured.update(payload) or {"gcs_path": payload["target_gcs_path"]})
+    monkeypatch.setattr(processing.vertical_render, "submit", lambda payload: captured.update(payload) or {"gcs_path": payload["target_gcs_path"], "automatic_focal_points": [{"time": 10, "x": 900, "y": 540}]})
     options = RenderRequest.model_validate({"branding": {"logo": {"gcs_path": "templates/logo.png", "x_percent": 68, "y_percent": 5, "width_percent": 27, "height_percent": 10}, "text": {"text": "Título de capítulo suficientemente longo", "x_percent": 10, "y_percent": 18, "width_percent": 80, "height_percent": 12, "font_size": 54}}})
 
     processing.render_chapter("video", "chapter", options, final=True)
@@ -111,6 +111,7 @@ def test_render_payload_converts_template_percentages_to_pixels(monkeypatch):
     assert captured["text_overlays"][0]["x"] == 108
     assert captured["text_overlays"][0]["y"] == 346
     assert captured["text_overlays"][0]["max_width"] == 864
+    assert chapter_document.data["render_options"]["automatic_focal_points"] == [{"time": 10, "x": 900, "y": 540}]
 
 
 def test_template_geometry_must_stay_inside_vertical_canvas():

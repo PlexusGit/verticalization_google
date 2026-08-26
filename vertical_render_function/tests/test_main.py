@@ -59,18 +59,45 @@ def test_component_success_downloads_renders_uploads_and_updates_both_statuses(a
     def download(_uri, destination):
         Path(destination).write_bytes(b"source")
 
-    def fake_render(_spec, input_path, output_path, **_kwargs):
+    def fake_render(spec, input_path, output_path, **_kwargs):
         assert Path(input_path).exists()
+        assert spec.automatic_focal_points == ({"time": 0.0, "x": 800.0, "y": 500.0},)
         Path(output_path).write_bytes(b"mp4")
 
     monkeypatch.setattr(main, "_download", download)
+    monkeypatch.setattr(main, "analyze_focal_points", lambda *_args: ({"time": 0.0, "x": 800.0, "y": 500.0},))
     monkeypatch.setattr(main, "render", fake_render)
     monkeypatch.setattr(main, "_upload", lambda uri, source: "gs://output/render.mp4" if Path(source).exists() else None)
 
     body, status, _ = invoke(app, json=valid_payload(), headers={"X-API-Key": "key"})
     assert status == 200 and body["width"] == 1080 and body["height"] == 1920
+    assert body["automatic_focal_points"] == [{"time": 0.0, "x": 800.0, "y": 500.0}]
     assert [entry[0][3] for entry in updates] == ["PROCESSING", "COMPLETED"]
     assert all(entry[0][2] == "chapter_1" for entry in updates)
+
+
+def test_automatic_focus_falls_back_to_center_on_detection_error(monkeypatch):
+    spec = main.validate_request(valid_payload())
+    monkeypatch.setattr(main, "analyze_focal_points", Mock(side_effect=RuntimeError("detector")))
+    assert main._add_automatic_focus(spec, "/tmp/source") is spec
+
+
+def test_manual_mode_skips_face_detection(monkeypatch):
+    spec = main.validate_request({**valid_payload(), "mode": "split_stack"})
+    analyze = Mock()
+    monkeypatch.setattr(main, "analyze_focal_points", analyze)
+    assert main._add_automatic_focus(spec, "/tmp/source") is spec
+    analyze.assert_not_called()
+
+
+def test_cached_points_are_compacted_without_face_detection(monkeypatch):
+    points = [{"time": index, "x": 800 + index, "y": 500} for index in range(100)]
+    spec = main.validate_request({**valid_payload(), "automatic_focal_points": points})
+    analyze = Mock()
+    monkeypatch.setattr(main, "analyze_focal_points", analyze)
+    result = main._add_automatic_focus(spec, "/tmp/source")
+    assert len(result.automatic_focal_points) == 24
+    analyze.assert_not_called()
 
 
 def test_component_failure_records_error_without_leaking_details(app, monkeypatch):

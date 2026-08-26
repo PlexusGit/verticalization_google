@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Revisão — Plexus Vertical Cuts{% endblock %}
 {% block content %}
-<header class="detail-header"><div><a class="download" href="/dashboard">← Voltar</a><h1 id="video-title">Carregando…</h1><p id="video-meta"></p></div><div class="actions"><span id="video-status" class="status">…</span><button class="button danger" id="delete-video">Excluir</button></div></header>
+<header class="detail-header" id="video-detail" data-video-id="{{ video_id }}"><div><a class="download" href="/dashboard">← Voltar</a><h1 id="video-title">Carregando…</h1><p id="video-meta"></p></div><div class="actions"><span id="video-status" class="status">…</span><button class="button danger" id="delete-video">Excluir</button></div></header>
 <div id="video-error" class="panel error" hidden></div>
 <nav class="tabs"><button class="active" data-tab="chapters">Capítulos</button><button data-tab="editor">Editor vertical</button><button data-tab="transcript">Transcrição</button></nav>
 <section class="tab-pane" id="tab-chapters">
@@ -14,11 +14,11 @@
 <section class="tab-pane" id="tab-editor" hidden>
   <div id="editor-empty" class="empty">Selecione um capítulo na aba Capítulos.</div>
   <div id="editor-content" hidden>
-    <div class="section-head"><div><h2 id="editor-title">Editor vertical</h2><p>O rascunho usa recorte central. Ajuste marca, legenda ou enquadramento e gere novamente.</p></div><button class="button primary" id="render-button">Gerar novo rascunho</button></div>
+    <div class="section-head"><div><h2 id="editor-title">Editor vertical</h2><p>O rascunho acompanha rostos automaticamente, com recorte central como fallback. Ajuste marca, legenda ou enquadramento e gere novamente.</p></div><button class="button primary" id="render-button">Gerar novo rascunho</button></div>
     <div class="review-layout">
       <div class="panel"><div class="preview-phone"><video id="vertical-preview" controls playsinline></video><div class="overlay-preview"><img id="logo-preview" hidden><div class="overlay-text" id="text-preview"></div><div class="caption-preview" id="caption-preview">Prévia da legenda</div></div></div></div>
       <div class="panel stack">
-        <label>Modo de enquadramento<select id="layout-mode"><option value="center_crop">Recorte central automático</option><option value="split_stack">Duas âncoras manuais</option></select></label>
+        <label>Modo de enquadramento<select id="layout-mode"><option value="center_crop">Foco automático em rostos</option><option value="split_stack">Duas âncoras manuais</option></select></label>
         <label>Legendas do capítulo<textarea id="chapter-subtitles" rows="8"></textarea></label>
         <div class="editor-grid"><label>Tamanho da legenda<input id="caption-size" type="number" min="18" max="120" value="54"></label><label>Posição<select id="caption-position"><option value="bottom">Inferior</option><option value="middle">Centro</option><option value="top">Superior</option></select></label></div>
         <div class="editor-grid"><label>Cor<input id="caption-color" type="color" value="#ffffff"></label><label>Contorno<input id="caption-outline" type="color" value="#000000"></label></div>
@@ -36,7 +36,7 @@
 {% endblock %}
 {% block scripts %}<script src="/static/app.js"></script><script>
 // The review editor is intentionally dependency-free: state comes from the API and remains persisted in Firestore.
-const videoId={{ video_id|tojson }}, statusLabels={UPLOADING:'Enviando',TRANSCODING:'Convertendo',TRANSCRIBING:'Transcrevendo',SUGGESTING:'Criando capítulos',RENDERING_DRAFTS:'Gerando rascunhos',PENDING_REVIEW:'Aguardando revisão',RENDERING_FINALS:'Gerando finais',COMPLETED:'Concluído',ERROR:'Erro'};
+const videoId=document.getElementById('video-detail').dataset.videoId, statusLabels={UPLOADING:'Enviando',TRANSCODING:'Convertendo',TRANSCRIBING:'Transcrevendo',SUGGESTING:'Criando capítulos',RENDERING_DRAFTS:'Gerando rascunhos',PENDING_REVIEW:'Aguardando revisão',RENDERING_FINALS:'Gerando finais',COMPLETED:'Concluído',ERROR:'Erro'};
 let videoData=null,templateData=[],selectedChapter=null,sourceUrl='',logoPath='',keyframesTop=[],keyframesBottom=[];
 const source=document.getElementById('source-video'),manual=document.getElementById('manual-video'),approveButton=document.getElementById('approve');
 function toast(message){const node=document.getElementById('toast');node.textContent=message;node.hidden=false;setTimeout(()=>node.hidden=true,3000)}
