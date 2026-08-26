@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Templates — Plexus Vertical Cuts{% endblock %}
+{% block content %}
+<section class="section-head page-head"><div><p class="eyebrow">IDENTIDADE VISUAL</p><h1>Templates</h1><p>Posicione logo e título diretamente em uma tela vertical.</p></div></section>
+<section class="panel template-creator">
+  <div class="section-head"><div><h2>Criar template</h2><p>Arraste e redimensione os elementos. O texto de exemplo será substituído pela macro durante a geração.</p></div></div>
+  <form id="template-form">
+    <div class="template-builder">
+      <div class="template-controls stack">
+        <label>Nome do template<input id="template-title" required maxlength="120" placeholder="Ex.: Notícias — logo superior"></label>
+        <label>Macro do título<input id="title-macro" required maxlength="240" value="{chapter_title}"><small>Variáveis: <code>{chapter_title}</code> e <code>{video_title}</code>.</small></label>
+        <label>Logo opcional<input id="template-logo" type="file" accept="image/png,image/jpeg,image/webp"><small>Você também pode arrastar uma imagem para a tela.</small></label>
+        <label>Texto de exemplo<input id="dummy-title" maxlength="120" value="Título de exemplo para o capítulo"></label>
+        <label>Tamanho do título<input id="title-font-size" type="range" min="16" max="140" value="54"><span id="font-size-label">54 px</span></label>
+        <div class="template-instructions"><strong>Como editar</strong><span>Use “Mover” para arrastar cada elemento.</span><span>Use o canto azul para redimensionar.</span><span>Todo posicionamento é salvo proporcionalmente à tela 9:16.</span></div>
+      </div>
+      <div class="template-canvas-column">
+        <div class="template-canvas" id="template-canvas">
+          <div class="canvas-safe-area"></div>
+          <div class="canvas-placeholder">9:16</div>
+          <div class="canvas-element logo-element" id="canvas-logo" hidden><button type="button" class="element-grip" aria-label="Mover logo">Mover</button><img id="canvas-logo-image" alt="Prévia do logo"><span class="resize-handle" aria-hidden="true"></span></div>
+          <div class="canvas-element title-element" id="canvas-title"><button type="button" class="element-grip" aria-label="Mover título">Mover</button><div id="canvas-title-text" class="canvas-title-text" contenteditable="true" role="textbox" aria-label="Texto de exemplo">Título de exemplo para o capítulo</div><span class="resize-handle" aria-hidden="true"></span></div>
+        </div>
+        <p class="canvas-help">Arraste uma imagem para adicionar o logo.</p>
+      </div>
+    </div>
+    <div class="actions template-submit"><span id="template-message" role="status"></span><button class="button primary" id="create-template">Criar template</button></div>
+  </form>
+</section>
+<section><div class="section-head"><div><h2>Templates disponíveis</h2><p>Escolha um deles em cada capítulo antes de aprovar o vídeo.</p></div></div><div id="template-list" class="template-grid"><div class="empty">Carregando templates…</div></div></section>
+{% endblock %}
+{% block scripts %}<script src="/static/app.js"></script><script>
+const stage=document.getElementById('template-canvas'),logoNode=document.getElementById('canvas-logo'),titleNode=document.getElementById('canvas-title'),logoImage=document.getElementById('canvas-logo-image'),dummyInput=document.getElementById('dummy-title'),titleText=document.getElementById('canvas-title-text'),fontSize=document.getElementById('title-font-size');
+let logoFile=null;
+function setBox(node,geometry){node.style.left=geometry.x+'%';node.style.top=geometry.y+'%';node.style.width=geometry.width+'%';node.style.height=geometry.height+'%'}
+function resetCanvas(){setBox(logoNode,{x:68,y:5,width:27,height:10});setBox(titleNode,{x:10,y:18,width:80,height:12});logoNode.hidden=true;logoFile=null;logoImage.removeAttribute('src');titleText.textContent='Título de exemplo para o capítulo';dummyInput.value=titleText.textContent;fontSize.value=54;updateFontSize()}
+function boxGeometry(node){if(node.hidden)return {x_percent:parseFloat(node.style.left),y_percent:parseFloat(node.style.top),width_percent:parseFloat(node.style.width),height_percent:parseFloat(node.style.height)};const parent=stage.getBoundingClientRect(),box=node.getBoundingClientRect();return {x_percent:Number(((box.left-parent.left)/parent.width*100).toFixed(3)),y_percent:Number(((box.top-parent.top)/parent.height*100).toFixed(3)),width_percent:Number((box.width/parent.width*100).toFixed(3)),height_percent:Number((box.height/parent.height*100).toFixed(3))}}
+function makeInteractive(node,preserveRatio=false){const grip=node.querySelector('.element-grip'),resize=node.querySelector('.resize-handle');grip.onpointerdown=event=>{event.preventDefault();grip.setPointerCapture(event.pointerId);const start={x:event.clientX,y:event.clientY,left:node.offsetLeft,top:node.offsetTop};grip.onpointermove=move=>{if(!grip.hasPointerCapture(move.pointerId))return;node.style.left=Math.max(0,Math.min(stage.clientWidth-node.offsetWidth,start.left+move.clientX-start.x))+'px';node.style.top=Math.max(0,Math.min(stage.clientHeight-node.offsetHeight,start.top+move.clientY-start.y))+'px'};grip.onpointerup=up=>grip.releasePointerCapture(up.pointerId)};resize.onpointerdown=event=>{event.preventDefault();resize.setPointerCapture(event.pointerId);const start={x:event.clientX,y:event.clientY,width:node.offsetWidth,height:node.offsetHeight},ratio=start.width/start.height;resize.onpointermove=move=>{if(!resize.hasPointerCapture(move.pointerId))return;let width=Math.max(48,Math.min(stage.clientWidth-node.offsetLeft,start.width+move.clientX-start.x)),height=preserveRatio?width/ratio:Math.max(38,Math.min(stage.clientHeight-node.offsetTop,start.height+move.clientY-start.y));if(height>stage.clientHeight-node.offsetTop){height=stage.clientHeight-node.offsetTop;if(preserveRatio)width=height*ratio}node.style.width=width+'px';node.style.height=height+'px'};resize.onpointerup=up=>resize.releasePointerCapture(up.pointerId)}}
+function showLogo(file){if(!file||!file.type.startsWith('image/'))return;logoFile=file;logoImage.src=URL.createObjectURL(file);logoNode.hidden=false;logoImage.onload=()=>{const width=logoNode.offsetWidth,height=Math.min(stage.clientHeight-logoNode.offsetTop,width/(logoImage.naturalWidth/logoImage.naturalHeight));logoNode.style.height=Math.max(32,height)+'px'}}
+function updateFontSize(){titleText.style.fontSize=Math.max(10,Number(fontSize.value)/3)+'px';document.getElementById('font-size-label').textContent=fontSize.value+' px'}
+makeInteractive(logoNode,true);makeInteractive(titleNode);setBox(logoNode,{x:68,y:5,width:27,height:10});setBox(titleNode,{x:10,y:18,width:80,height:12});updateFontSize();
+document.getElementById('template-logo').onchange=event=>showLogo(event.target.files[0]);stage.ondragover=event=>{event.preventDefault();stage.classList.add('dragging')};stage.ondragleave=()=>stage.classList.remove('dragging');stage.ondrop=event=>{event.preventDefault();stage.classList.remove('dragging');showLogo([...event.dataTransfer.files].find(file=>file.type.startsWith('image/')))};
+dummyInput.oninput=()=>titleText.textContent=dummyInput.value||'Título de exemplo';titleText.oninput=()=>dummyInput.value=titleText.textContent.trim();fontSize.oninput=updateFontSize;
+async function loadTemplates(){const data=await api('/api/templates');const list=document.getElementById('template-list');if(!data.templates?.length){list.innerHTML='<div class="empty">Nenhum template criado.</div>';return}list.innerHTML=data.templates.map(item=>`<article class="panel template-card">${item.logo_preview_url?`<img src="${escapeHtml(item.logo_preview_url)}" alt="Logo do template">`:'<div class="template-no-logo">Sem logo</div>'}<div><h3>${escapeHtml(item.title)}</h3><p><strong>Macro:</strong> ${escapeHtml(item.title_macro)}</p><p><strong>Título:</strong> ${item.title_geometry?`${Number(item.title_geometry.width_percent).toFixed(0)}% × ${Number(item.title_geometry.height_percent).toFixed(0)}%`:'Posição predefinida'}</p><p><strong>Logo:</strong> ${item.logo?.width_percent?`${Number(item.logo.width_percent).toFixed(0)}% da largura`:'Sem logo'}</p></div></article>`).join('')}
+document.getElementById('template-form').onsubmit=async event=>{event.preventDefault();const button=document.getElementById('create-template'),message=document.getElementById('template-message'),form=new FormData(),logo=boxGeometry(logoNode),title=boxGeometry(titleNode);form.append('title',document.getElementById('template-title').value);form.append('title_macro',document.getElementById('title-macro').value);form.append('logo_position','top-right');form.append('title_position','top-center');for(const [key,value] of Object.entries(logo))form.append('logo_'+key,value);for(const [key,value] of Object.entries(title))form.append('title_'+key,value);form.append('title_font_size',fontSize.value);if(logoFile)form.append('logo',logoFile);button.disabled=true;message.textContent='';try{await api('/api/templates',{method:'POST',body:form});event.target.reset();document.getElementById('title-macro').value='{chapter_title}';resetCanvas();message.textContent='Template criado.';message.className='success';await loadTemplates()}catch(error){message.textContent=error.message;message.className='error'}finally{button.disabled=false}};
+loadTemplates().catch(error=>{document.getElementById('template-list').innerHTML=`<div class="empty error">${escapeHtml(error.message)}</div>`});
+</script>{% endblock %}

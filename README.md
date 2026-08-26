@@ -12,6 +12,7 @@ A interface está em português brasileiro, é responsiva e usa somente a marca 
 - Sugestão de capítulos e ganchos com saída estruturada do Gemini.
 - Rascunho vertical automático com recorte 9:16 no centro horizontal.
 - Editor de capítulos, limites, legendas estáticas, logo e texto de marca.
+- Templates reutilizáveis de logo e título, selecionáveis por capítulo antes da aprovação.
 - Reenquadramento manual no modelo RPP: duas áreas independentes, empilhadas, com quadros-chave.
 - Exportação final somente após aprovação humana.
 - Login Google com allowlist de e-mails no Firestore e API key para automação.

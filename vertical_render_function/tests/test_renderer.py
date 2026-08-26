@@ -68,6 +68,18 @@ def test_center_captions_logo_and_text_filter_chain(tmp_path):
     assert "drawtext=" in graph and label == "vtext0"
 
 
+def test_template_geometry_uses_exact_logo_and_title_coordinates():
+    spec = renderer.validate_request(payload(
+        logo={"gcs_path": "gs://media/logo.png", "width": 270, "height": 150, "x": 730, "y": 96},
+        text_overlays=[{"text": "Título", "x": 108, "y": 420, "size": 54}],
+    ))
+    graph, label = renderer.build_video_filter(spec, None, 1)
+    assert "scale=270:150" in graph
+    assert "overlay=730:96" in graph
+    assert "x=108:y=420" in graph
+    assert label == "vtext0"
+
+
 def test_render_uses_argument_array_and_checks_subprocess():
     spec = renderer.validate_request(payload())
     with patch("renderer.subprocess.run") as run:

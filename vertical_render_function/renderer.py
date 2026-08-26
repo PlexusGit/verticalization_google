@@ -261,10 +261,16 @@ def build_video_filter(spec: RenderSpec, ass_path: str | None, logo_input_index:
         filters.append(f"[{current}]subtitles='{escaped_path}'[vcap]")
         current = "vcap"
     if logo_input_index is not None and spec.logo:
-        size = int(_number(spec.logo.get("size", 180), "logo.size", 1))
+        width = int(_number(spec.logo.get("width") or spec.logo.get("size", 180), "logo.width", 1))
+        raw_height = spec.logo.get("height")
+        height = int(_number(raw_height, "logo.height", 1)) if raw_height is not None else -1
         opacity = min(1.0, _number(spec.logo.get("opacity", 1), "logo.opacity", 0))
-        x, y = _position(spec.logo.get("position"))
-        filters.extend([f"[{logo_input_index}:v]scale={size}:-1,format=rgba,colorchannelmixer=aa={opacity:g}[logo]", f"[{current}][logo]overlay={x}:{y}[vlogo]"])
+        if spec.logo.get("x") is not None and spec.logo.get("y") is not None:
+            x = f"{int(_number(spec.logo['x'], 'logo.x', 0))}"
+            y = f"{int(_number(spec.logo['y'], 'logo.y', 0))}"
+        else:
+            x, y = _position(spec.logo.get("position"))
+        filters.extend([f"[{logo_input_index}:v]scale={width}:{height},format=rgba,colorchannelmixer=aa={opacity:g}[logo]", f"[{current}][logo]overlay={x}:{y}[vlogo]"])
         current = "vlogo"
     for index, overlay in enumerate(spec.text_overlays):
         text = _escape_filter_text(overlay["text"])
@@ -274,7 +280,11 @@ def build_video_filter(spec: RenderSpec, ass_path: str | None, logo_input_index:
         # drawtext uses text dimensions rather than overlay dimensions.
         pos = overlay.get("position", "top_left")
         text_positions = {"top_left": ("40", "40"), "top_center": ("(w-text_w)/2", "40"), "top_right": ("w-text_w-40", "40"), "center": ("(w-text_w)/2", "(h-text_h)/2"), "bottom_left": ("40", "h-text_h-40"), "bottom_center": ("(w-text_w)/2", "h-text_h-40"), "bottom_right": ("w-text_w-40", "h-text_h-40")}
-        x, y = text_positions.get(pos, text_positions["top_left"])
+        if overlay.get("x") is not None and overlay.get("y") is not None:
+            x = f"{int(_number(overlay['x'], f'text_overlays[{index}].x', 0))}"
+            y = f"{int(_number(overlay['y'], f'text_overlays[{index}].y', 0))}"
+        else:
+            x, y = text_positions.get(pos, text_positions["top_left"])
         label = f"vtext{index}"
         filters.append(f"[{current}]drawtext=text='{text}':fontsize={size}:fontcolor={color}@{opacity:g}:x={x}:y={y}[{label}]")
         current = label

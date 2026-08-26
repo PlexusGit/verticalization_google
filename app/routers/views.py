@@ -30,6 +30,14 @@ async def dashboard(request: Request):
     return request.app.state.templates.TemplateResponse(request, "dashboard.html", {"user": user})
 
 
+@router.get("/templates", response_class=HTMLResponse)
+async def templates(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse("/", status_code=303)
+    return request.app.state.templates.TemplateResponse(request, "templates.html", {"user": user})
+
+
 @router.get("/users", response_class=HTMLResponse)
 async def users(request: Request):
     user = get_current_user(request)

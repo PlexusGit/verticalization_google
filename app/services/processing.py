@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import textwrap
 import time
 import uuid
 
@@ -334,25 +335,50 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
     branding = persisted_options.get("branding") or {}
     logo = branding.get("logo")
     if logo:
+        logo_width = round(settings.OUTPUT_WIDTH * float(logo.get("width_percent", 18)) / 100)
+        logo_height_percent = logo.get("height_percent")
         logo = {
             "gcs_path": logo["gcs_path"],
             "position": logo.get("position", "top-right").replace("-", "_"),
-            "size": round(settings.OUTPUT_WIDTH * float(logo.get("width_percent", 18)) / 100),
+            "size": logo_width,
+            "width": logo_width,
+            "height": round(settings.OUTPUT_HEIGHT * float(logo_height_percent) / 100) if logo_height_percent is not None else None,
+            "x": round(settings.OUTPUT_WIDTH * float(logo["x_percent"]) / 100) if logo.get("x_percent") is not None else None,
+            "y": round(settings.OUTPUT_HEIGHT * float(logo["y_percent"]) / 100) if logo.get("y_percent") is not None else None,
             "opacity": logo.get("opacity", 1),
         }
     text = branding.get("text")
     text_overlays = []
     if text and text.get("text"):
+        raw_position = text.get("position", "top")
         position = {"top": "top_center", "middle": "center", "bottom": "bottom_center"}.get(
-            text.get("position"), "top_center"
+            raw_position, raw_position.replace("-", "_")
         )
+        font_size = int(text.get("font_size", 54))
+        width_percent = text.get("width_percent")
+        height_percent = text.get("height_percent")
+        max_width = round(settings.OUTPUT_WIDTH * float(width_percent) / 100) if width_percent is not None else None
+        max_height = round(settings.OUTPUT_HEIGHT * float(height_percent) / 100) if height_percent is not None else None
+        rendered_text = text["text"]
+        if max_width:
+            while True:
+                characters_per_line = max(8, int(max_width / max(1, font_size * 0.58)))
+                lines = textwrap.wrap(rendered_text, width=characters_per_line, break_long_words=False) or [rendered_text]
+                if not max_height or len(lines) * font_size * 1.2 <= max_height or font_size <= 16:
+                    rendered_text = "\n".join(lines)
+                    break
+                font_size -= 2
         text_overlays.append(
             {
-                "text": text["text"],
+                "text": rendered_text,
                 "position": position,
-                "size": text.get("font_size", 48),
+                "size": font_size,
                 "color": text.get("color", "#FFFFFF"),
                 "opacity": 1,
+                "x": round(settings.OUTPUT_WIDTH * float(text["x_percent"]) / 100) if text.get("x_percent") is not None else None,
+                "y": round(settings.OUTPUT_HEIGHT * float(text["y_percent"]) / 100) if text.get("y_percent") is not None else None,
+                "max_width": max_width,
+                "max_height": max_height,
             }
         )
     caption_style = persisted_options.get("caption_style") or {}

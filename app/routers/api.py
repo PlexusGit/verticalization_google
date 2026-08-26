@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from app.auth import get_current_user, request_is_admin, request_is_authenticated
 from app.config import settings
 from app.db import get_db
-from app.models import AllowedUserInput, ChapterInput, ImportGCSRequest, RenderRequest, VideoStatus
+from app.models import AllowedUserInput, ApprovalRequest, ChapterInput, ImportGCSRequest, RenderRequest, VideoStatus, VideoTemplateInput
 from app.services import gemini, srt, storage
 from app.services.processing import (
     create_video_record,
@@ -72,6 +72,28 @@ def _approval_block_reason(video_data: dict) -> str | None:
     if video_data.get("status") != VideoStatus.PENDING_REVIEW.value:
         return "Os capítulos ainda não estão prontos para aprovação"
     return None
+
+
+def _template_branding(template: dict, video: dict, chapter: dict) -> dict:
+    title = str(template.get("title_macro") or "{chapter_title}")
+    title = title.replace("{chapter_title}", str(chapter.get("title") or ""))
+    title = title.replace("{video_title}", str(video.get("title") or ""))
+    geometry = template.get("title_geometry") or {}
+    return {
+        "logo": template.get("logo"),
+        "text": {
+            "text": title,
+            "position": template.get("title_position") or "top-center",
+            "font_size": geometry.get("font_size", 54),
+            "color": "#FFFFFF",
+            "background_color": "#000000",
+            "background_opacity": 0.55,
+            "x_percent": geometry.get("x_percent"),
+            "y_percent": geometry.get("y_percent"),
+            "width_percent": geometry.get("width_percent"),
+            "height_percent": geometry.get("height_percent"),
+        },
+    }
 
 
 def _daily_limit_reached(owner_email: str) -> bool:
@@ -288,6 +310,108 @@ async def create_user(request: Request):
     return JSONResponse({"email": payload.email, "role": payload.role}, status_code=201)
 
 
+@router.get("/templates")
+async def list_templates(request: Request):
+    if response := _unauthorized(request):
+        return response
+    templates = []
+    for document in get_db().collection(settings.COLLECTION_TEMPLATES).stream():
+        data = document.to_dict() or {}
+        logo_path = (data.get("logo") or {}).get("gcs_path")
+        if logo_path:
+            try:
+                data["logo_preview_url"] = storage.signed_url(logo_path, 60)
+            except Exception:
+                data["logo_preview_url"] = None
+        templates.append(data)
+    templates.sort(key=lambda item: (item.get("title") or "").lower())
+    return JSONResponse(_serialize({"templates": templates}))
+
+
+@router.post("/templates")
+async def create_template(
+    request: Request,
+    title: str = Form(...),
+    title_macro: str = Form("{chapter_title}"),
+    logo_position: str = Form("top-right"),
+    title_position: str = Form("top-center"),
+    logo_x_percent: float = Form(68),
+    logo_y_percent: float = Form(5),
+    logo_width_percent: float = Form(27),
+    logo_height_percent: float = Form(10),
+    title_x_percent: float = Form(10),
+    title_y_percent: float = Form(18),
+    title_width_percent: float = Form(80),
+    title_height_percent: float = Form(12),
+    title_font_size: int = Form(54),
+    logo: UploadFile | None = File(None),
+):
+    if response := _unauthorized(request):
+        return response
+    try:
+        payload = VideoTemplateInput.model_validate(
+            {
+                "title": title,
+                "title_macro": title_macro,
+                "logo_position": logo_position,
+                "title_position": title_position,
+                "logo_x_percent": logo_x_percent,
+                "logo_y_percent": logo_y_percent,
+                "logo_width_percent": logo_width_percent,
+                "logo_height_percent": logo_height_percent,
+                "title_x_percent": title_x_percent,
+                "title_y_percent": title_y_percent,
+                "title_width_percent": title_width_percent,
+                "title_height_percent": title_height_percent,
+                "title_font_size": title_font_size,
+            }
+        )
+    except ValidationError as exc:
+        return JSONResponse({"error": exc.errors()}, status_code=422)
+    collection = get_db().collection(settings.COLLECTION_TEMPLATES)
+    reference = collection.document()
+    logo_data = None
+    if logo and logo.filename:
+        extension = os.path.splitext(logo.filename)[1].lower()
+        if extension not in _ALLOWED_LOGO_EXTENSIONS:
+            return JSONResponse({"error": "Use PNG, JPG ou WebP"}, status_code=400)
+        raw = await logo.read()
+        if not raw or len(raw) > 10 * 1024 * 1024:
+            return JSONResponse({"error": "Logo vazio ou maior que 10 MB"}, status_code=400)
+        logo_path = f"templates/{reference.id}/logo{extension}"
+        storage.upload_bytes(raw, logo_path, logo.content_type or "application/octet-stream")
+        logo_data = {
+            "gcs_path": logo_path,
+            "position": payload.logo_position,
+            "x_percent": payload.logo_x_percent,
+            "y_percent": payload.logo_y_percent,
+            "width_percent": payload.logo_width_percent,
+            "height_percent": payload.logo_height_percent,
+            "opacity": 1,
+            "margin": 40,
+        }
+    current_user = get_current_user(request) or {}
+    data = {
+        "id": reference.id,
+        "title": payload.title,
+        "title_macro": payload.title_macro,
+        "logo": logo_data,
+        "title_position": payload.title_position,
+        "title_geometry": {
+            "x_percent": payload.title_x_percent,
+            "y_percent": payload.title_y_percent,
+            "width_percent": payload.title_width_percent,
+            "height_percent": payload.title_height_percent,
+            "font_size": payload.title_font_size,
+        },
+        "created_by": (current_user.get("info") or {}).get("email", ""),
+        "created_at": firestore.SERVER_TIMESTAMP,
+        "updated_at": firestore.SERVER_TIMESTAMP,
+    }
+    reference.set(data)
+    return JSONResponse({"id": reference.id, "title": payload.title}, status_code=201)
+
+
 @router.get("/videos")
 async def list_videos(request: Request, status: str | None = None):
     if response := _unauthorized(request):
@@ -483,11 +607,51 @@ async def approve(request: Request, video_id: str, background_tasks: BackgroundT
     if reason := _approval_block_reason(video_data):
         return JSONResponse({"error": reason}, status_code=409)
 
-    body = await request.json()
-    selected = list(dict.fromkeys(body.get("chapter_ids") or []))
-    available = {document.id for document in video.reference.collection("chapters").stream()}
-    if not selected or any(chapter_id not in available for chapter_id in selected):
+    try:
+        payload = ApprovalRequest.model_validate(await request.json())
+    except ValidationError as exc:
+        return JSONResponse({"error": exc.errors()}, status_code=422)
+    selected = list(dict.fromkeys(payload.chapter_ids))
+    available = {document.id: document for document in video.reference.collection("chapters").stream()}
+    if any(chapter_id not in available for chapter_id in selected):
         return JSONResponse({"error": "Selecione capítulos válidos"}, status_code=400)
+
+    templates = {}
+    for chapter_id in selected:
+        template_id = payload.template_ids.get(chapter_id)
+        if not template_id or template_id in templates:
+            continue
+        snapshot = get_db().collection(settings.COLLECTION_TEMPLATES).document(template_id).get()
+        if not snapshot.exists:
+            return JSONResponse({"error": "Um dos templates selecionados não existe"}, status_code=400)
+        templates[template_id] = snapshot.to_dict() or {}
+
+    approved_templates = {}
+    for chapter_id in selected:
+        chapter_document = available[chapter_id]
+        chapter = chapter_document.to_dict() or {}
+        template_id = payload.template_ids.get(chapter_id)
+        approved_templates[chapter_id] = template_id
+        if not template_id:
+            chapter_document.reference.set(
+                {"template_id": None, "template_title": None, "template_snapshot": None, "updated_at": firestore.SERVER_TIMESTAMP},
+                merge=True,
+            )
+            continue
+        template = templates[template_id]
+        raw_options = chapter.get("render_options") or {}
+        raw_options["branding"] = _template_branding(template, video_data, chapter)
+        options = RenderRequest.model_validate(raw_options).model_dump(mode="json")
+        chapter_document.reference.set(
+            {
+                "template_id": template_id,
+                "template_title": template.get("title"),
+                "template_snapshot": template,
+                "render_options": options,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
 
     # Persist the lock before dispatch so repeated clicks or concurrent requests
     # cannot submit the same set of final renders twice.
@@ -495,6 +659,7 @@ async def approve(request: Request, video_id: str, background_tasks: BackgroundT
         {
             "status": VideoStatus.RENDERING_FINALS.value,
             "approved_chapter_ids": selected,
+            "approved_templates": approved_templates,
             "approved_at": firestore.SERVER_TIMESTAMP,
             "updated_at": firestore.SERVER_TIMESTAMP,
         }

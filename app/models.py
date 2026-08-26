@@ -21,6 +21,35 @@ class AllowedUserInput(BaseModel):
         return normalized
 
 
+class VideoTemplateInput(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    title_macro: str = Field(default="{chapter_title}", min_length=1, max_length=240)
+    logo_position: Literal["top-left", "top-right", "bottom-left", "bottom-right"] = "top-right"
+    title_position: Literal["top-left", "top-center", "top-right", "center", "bottom-left", "bottom-center", "bottom-right"] = "top-center"
+    logo_x_percent: float = Field(default=68, ge=0, le=100)
+    logo_y_percent: float = Field(default=5, ge=0, le=100)
+    logo_width_percent: float = Field(default=27, ge=3, le=100)
+    logo_height_percent: float = Field(default=10, ge=1, le=100)
+    title_x_percent: float = Field(default=10, ge=0, le=100)
+    title_y_percent: float = Field(default=18, ge=0, le=100)
+    title_width_percent: float = Field(default=80, ge=5, le=100)
+    title_height_percent: float = Field(default=12, ge=2, le=100)
+    title_font_size: int = Field(default=54, ge=16, le=140)
+
+    @model_validator(mode="after")
+    def validate_geometry(self) -> "VideoTemplateInput":
+        if self.logo_x_percent + self.logo_width_percent > 100 or self.logo_y_percent + self.logo_height_percent > 100:
+            raise ValueError("A área do logo deve ficar dentro da tela vertical")
+        if self.title_x_percent + self.title_width_percent > 100 or self.title_y_percent + self.title_height_percent > 100:
+            raise ValueError("A área do título deve ficar dentro da tela vertical")
+        return self
+
+
+class ApprovalRequest(BaseModel):
+    chapter_ids: list[str] = Field(min_length=1, max_length=100)
+    template_ids: dict[str, str | None] = Field(default_factory=dict)
+
+
 class VideoStatus(StrEnum):
     UPLOADING = "UPLOADING"
     TRANSCODING = "TRANSCODING"
@@ -49,6 +78,7 @@ class ChapterInput(BaseModel):
     start_seconds: float = Field(ge=0)
     end_seconds: float = Field(gt=0)
     subtitle_text: str = Field(default="", max_length=100_000)
+    template_id: str | None = Field(default=None, max_length=200)
     selected: bool = True
 
     @model_validator(mode="after")
@@ -84,18 +114,25 @@ class CaptionStyle(BaseModel):
 class LogoOverlay(BaseModel):
     gcs_path: str = Field(default="", max_length=1024)
     position: Literal["top-left", "top-right", "bottom-left", "bottom-right"] = "top-right"
-    width_percent: float = Field(default=18, ge=3, le=60)
+    width_percent: float = Field(default=18, ge=3, le=100)
+    height_percent: float | None = Field(default=None, ge=1, le=100)
+    x_percent: float | None = Field(default=None, ge=0, le=100)
+    y_percent: float | None = Field(default=None, ge=0, le=100)
     opacity: float = Field(default=1, ge=0, le=1)
     margin: int = Field(default=40, ge=0, le=300)
 
 
 class TextOverlay(BaseModel):
     text: str = Field(default="", max_length=240)
-    position: Literal["top", "middle", "bottom"] = "top"
+    position: Literal["top", "middle", "bottom", "top-left", "top-center", "top-right", "center", "bottom-left", "bottom-center", "bottom-right"] = "top"
     font_size: int = Field(default=48, ge=16, le=140)
     color: str = "#FFFFFF"
     background_color: str = "#000000"
     background_opacity: float = Field(default=0.55, ge=0, le=1)
+    x_percent: float | None = Field(default=None, ge=0, le=100)
+    y_percent: float | None = Field(default=None, ge=0, le=100)
+    width_percent: float | None = Field(default=None, ge=5, le=100)
+    height_percent: float | None = Field(default=None, ge=2, le=100)
 
     @field_validator("color", "background_color")
     @classmethod

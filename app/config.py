@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     COLLECTION_USERS: str = "vertical_cuts_users"
     ALLOWED_EMAILS_COLLECTION: str = "vertical_cuts_allowed_emails"
     COLLECTION_PROMPTS: str = "vertical_cuts_prompts"
+    COLLECTION_TEMPLATES: str = "vertical_cuts_templates"
 
     TRANSCODE_URL: str = ""
     VERTICAL_RENDER_URL: str = ""

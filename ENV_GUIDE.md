@@ -283,6 +283,12 @@ INITIAL_ALLOWED_EMAILS=editor1@example.com,editor2@example.com
 - **Fase:** opcional/reservada para prompts configuráveis.
 - Padrão: `vertical_cuts_prompts`.
 
+### `COLLECTION_TEMPLATES`
+
+- **Fase:** opcional.
+- Padrão: `vertical_cuts_templates`.
+- Armazena templates reutilizáveis de logo e título para os renders verticais.
+
 ## 6. Segredos internos e IA
 
 ### `SECURITY_TOKEN`
