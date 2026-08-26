@@ -1,14 +1,14 @@
-# GNI Vertical Render Worker
+# Worker de Renderização Vertical GNI
 
-A Functions Framework/Cloud Run worker that downloads source media and optional
-logo assets from GCS, renders a fixed 1080x1920 MP4, uploads it to GCS, and updates
-Firestore render/chapter state.
+Um worker Functions Framework/Cloud Run que baixa mídia de origem e assets
+opcionais de logo do GCS, renderiza um MP4 fixo de 1080x1920, envia para o GCS
+e atualiza o estado de render/capítulo no Firestore.
 
 ## API
 
-`GET /health` is unauthenticated. `OPTIONS` supports CORS. `POST /` requires the
-`X-API-Key` header to exactly match `API_KEY` (the worker fails closed when unset).
-A representative body is:
+`GET /health` é sem autenticação. `OPTIONS` oferece suporte a CORS. `POST /`
+exige que o cabeçalho `X-API-Key` corresponda exatamente a `API_KEY` (o worker
+falha fechado quando não definido). Um corpo representativo é:
 
 ```json
 {
@@ -27,17 +27,18 @@ A representative body is:
 }
 ```
 
-`center_crop` uses the horizontal center. The documented
-`select_automatic_focal_point` function in `renderer.py` is the intended future
-active-speaker detector integration point. `split_stack` ports RPP's independent
-top/bottom x/y keyframe model, including cosine easing and crop-bound clamping.
-Caption times and keyframe times are absolute source-media times.
+`center_crop` usa o centro horizontal. A função documentada
+`select_automatic_focal_point` em `renderer.py` é o ponto de integração futuro
+para o detector de locutor ativo. `split_stack` porta o modelo de keyframes
+top/bottom x/y independente do RPP, incluindo easing de cosseno e limitação de
+crop. Tempos de legenda e tempos de keyframe são tempos absolutos da mídia de
+origem.
 
-Firestore paths are `COLLECTION_VIDEOS/{video_id}/renders/{render_id}` and, when
-provided, `COLLECTION_VIDEOS/{video_id}/chapters/{chapter_id}`. Statuses are
-`PROCESSING`, `COMPLETED`, and `ERROR`.
+Os caminhos no Firestore são `COLLECTION_VIDEOS/{video_id}/renders/{render_id}`
+e, quando fornecido, `COLLECTION_VIDEOS/{video_id}/chapters/{chapter_id}`. Os
+status são `PROCESSING`, `COMPLETED` e `ERROR`.
 
-## Local test and deployment
+## Teste local e implantação
 
 ```bash
 python3 -m pip install -r requirements-test.txt
@@ -45,8 +46,9 @@ python3 -m pip install -r requirements-test.txt
 ./deploy.sh
 ```
 
-`deploy.sh` reads `../.env`, pushes to Artifact Registry, and deploys with render-
-appropriate Cloud Run limits. The runtime service account needs Storage object
-read/write and Firestore write access. For stronger secret handling, configure
-Cloud Run/Secret Manager after first deployment instead of retaining `API_KEY` as
-a plain environment variable.
+`deploy.sh` lê `../.env`, envia para o Artifact Registry e implanta com limites
+de Cloud Run apropriados para renderização. A conta de serviço do runtime
+precisa de acesso de leitura/escrita de objetos do Storage e escrita no
+Firestore. Para um tratamento de secrets mais robusto, configure o
+Cloud Run/Secret Manager após a primeira implantação em vez de manter `API_KEY`
+como uma variável de ambiente em texto plano.
