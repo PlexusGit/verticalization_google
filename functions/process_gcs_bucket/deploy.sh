@@ -46,4 +46,4 @@ gcloud functions deploy "${FUNCTION_NAME}" \
   --docker-registry artifact-registry \
   --set-env-vars "^@^MAIN_API_URL=${MAIN_API_URL}@GCS_WATCH_BUCKET=${GCS_WATCH_BUCKET}@GCS_ALLOWED_EXTENSIONS=${EXTENSIONS}" \
   --set-secrets "API_TOKEN=${API_TOKEN_SECRET}:latest" \
-  "${SERVICE_ACCOUNT_ARG[@]}"
+  ${SERVICE_ACCOUNT_ARG[@]+"${SERVICE_ACCOUNT_ARG[@]}"}

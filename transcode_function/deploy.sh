@@ -58,7 +58,7 @@ fi
 gcloud run deploy "${SERVICE_NAME}" \
   --image="${IMAGE}" --region="${REGION}" --platform=managed \
   --execution-environment=gen2 --allow-unauthenticated \
-  "${SERVICE_ACCOUNT_ARGS[@]}" "${GPU_ARGS[@]}" \
+  ${SERVICE_ACCOUNT_ARGS[@]+"${SERVICE_ACCOUNT_ARGS[@]}"} ${GPU_ARGS[@]+"${GPU_ARGS[@]}"} \
   --cpu=4 --memory=16Gi --timeout=3600 --concurrency=1 \
   --min-instances=0 --max-instances=1 --no-cpu-throttling \
   --set-env-vars="${ENV_VARS}" \
