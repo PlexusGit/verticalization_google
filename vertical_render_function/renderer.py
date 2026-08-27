@@ -371,7 +371,11 @@ def render(spec: RenderSpec, input_path: str, output_path: str, ass_path: str | 
     filter_graph, final_label = build_video_filter(spec, ass_path, 1 if logo_path else None)
     command = ["ffmpeg", "-nostdin", "-hide_banner", "-y", "-ss", f"{spec.trim_start:g}", "-t", f"{spec.duration:g}", "-i", input_path]
     if logo_path:
-        command.extend(["-loop", "1", "-i", logo_path])
+        # A single-frame image input (no -loop 1) is held by the overlay
+        # filter's default eof_action=repeat for the entire video duration.
+        # Using -loop 1 makes the input infinite and causes ffmpeg to hang
+        # because the filter graph never terminates.
+        command.extend(["-i", logo_path])
     command.extend(["-filter_complex", filter_graph, "-map", f"[{final_label}]", "-map", "0:a?", "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", output_path])
     try:
         subprocess.run(command, check=True, capture_output=True, text=True, timeout=timeout)

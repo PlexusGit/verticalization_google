@@ -412,6 +412,22 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
         "logo": logo,
         "text_overlays": text_overlays,
     }
+    events.record(
+        video_id,
+        stage="render",
+        action=f"{kind}_render_started",
+        message=f"Renderização {kind} iniciada para {chapter_id}",
+        details={
+            "chapter_id": chapter_id,
+            "render_id": render_id,
+            "kind": kind,
+            "has_logo": bool(logo),
+            "has_text_overlay": bool(text_overlays),
+            "trim_start": chapter_start,
+            "trim_end": float(chapter["end_seconds"]),
+            "duration_seconds": float(chapter["end_seconds"]) - chapter_start,
+        },
+    )
     try:
         result = vertical_render.submit(payload)
         detected_points = result.get("automatic_focal_points") or persisted_options.get("automatic_focal_points") or []
@@ -439,10 +455,34 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
                 "updated_at": firestore.SERVER_TIMESTAMP,
             }
         )
+        events.record(
+            video_id,
+            stage="render",
+            action=f"{kind}_render_completed",
+            message=f"Renderização {kind} concluída para {chapter_id}",
+            details={"chapter_id": chapter_id, "render_id": render_id, "kind": kind, "gcs_path": output_path},
+        )
         return {"render_id": render_id, "gcs_path": output_path, "status": "COMPLETED"}
     except Exception as exc:
         render_ref.update({"status": "ERROR", "error": str(exc), "updated_at": firestore.SERVER_TIMESTAMP})
         chapter_ref.update({f"{kind}_status": "ERROR", f"{kind}_error": str(exc), "updated_at": firestore.SERVER_TIMESTAMP})
+        if final:
+            chapter_ref.update({"status": "ERROR", "updated_at": firestore.SERVER_TIMESTAMP})
+        events.record(
+            video_id,
+            stage="render",
+            action=f"{kind}_render_failed",
+            message=f"Renderização {kind} falhou para {chapter_id}",
+            details={
+                "chapter_id": chapter_id,
+                "render_id": render_id,
+                "kind": kind,
+                "error_type": type(exc).__name__,
+                "error_message": str(exc)[:500],
+            },
+            level="ERROR",
+        )
+        logger.error("Render %s failed for video=%s chapter=%s: %s", kind, video_id, chapter_id, exc, exc_info=True)
         raise
 
 
@@ -451,6 +491,13 @@ def render_final_chapters(video_id: str, chapter_ids: list[str]) -> None:
 
     video_ref = _video_ref(video_id)
     _stage(video_ref, VideoStatus.RENDERING_FINALS)
+    events.record(
+        video_id,
+        stage="render",
+        action="final_batch_started",
+        message="Renderização dos vídeos finais iniciada",
+        details={"chapter_ids": chapter_ids, "chapter_count": len(chapter_ids)},
+    )
     errors: list[str] = []
     for chapter_id in chapter_ids:
         chapter = video_ref.collection("chapters").document(chapter_id).get().to_dict() or {}
@@ -462,9 +509,25 @@ def render_final_chapters(video_id: str, chapter_ids: list[str]) -> None:
             errors.append(f"{chapter_id}: {exc}")
     if errors:
         _set_error(video_ref, RuntimeError("; ".join(errors)))
+        events.record(
+            video_id,
+            stage="render",
+            action="final_batch_failed",
+            message="Renderização dos vídeos finais falhou",
+            details={"errors": errors, "chapter_count": len(chapter_ids), "failed_count": len(errors)},
+            level="ERROR",
+        )
+        logger.error("Final render batch failed for video=%s: %s", video_id, "; ".join(errors))
     else:
         _stage(video_ref, VideoStatus.COMPLETED, clear_error=True)
         video_ref.update({"completed_at": firestore.SERVER_TIMESTAMP})
+        events.record(
+            video_id,
+            stage="render",
+            action="final_batch_completed",
+            message="Renderização dos vídeos finais concluída",
+            details={"chapter_count": len(chapter_ids)},
+        )
 
 
 def _video_ref(video_id: str):

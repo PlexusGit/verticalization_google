@@ -696,6 +696,39 @@ async def retry_video(request: Request, video_id: str, background_tasks: Backgro
     return JSONResponse({"status": "RETRYING"}, status_code=202)
 
 
+@router.post("/video/{video_id}/retry-finals")
+async def retry_final_renders(request: Request, video_id: str, background_tasks: BackgroundTasks):
+    """Re-render only the final chapters that failed, skipping completed ones."""
+
+    if response := _unauthorized(request):
+        return response
+    snapshot = _video_snapshot(video_id)
+    if not snapshot.exists:
+        return JSONResponse({"error": "Vídeo não encontrado"}, status_code=404)
+    video_data = snapshot.to_dict() or {}
+    if video_data.get("status") != VideoStatus.ERROR.value:
+        return JSONResponse({"error": "O vídeo não está em estado de erro"}, status_code=409)
+    approved_ids = video_data.get("approved_chapter_ids") or []
+    if not approved_ids:
+        return JSONResponse({"error": "Nenhum capítulo aprovado encontrado"}, status_code=409)
+    failed_ids = []
+    for chapter_id in approved_ids:
+        chapter = snapshot.reference.collection("chapters").document(chapter_id).get()
+        chapter_data = chapter.to_dict() or {}
+        if chapter_data.get("final_status") != "COMPLETED":
+            failed_ids.append(chapter_id)
+    if not failed_ids:
+        snapshot.reference.update(
+            {"status": VideoStatus.COMPLETED.value, "error": firestore.DELETE_FIELD, "error_type": firestore.DELETE_FIELD, "updated_at": firestore.SERVER_TIMESTAMP}
+        )
+        return JSONResponse({"status": VideoStatus.COMPLETED.value}, status_code=200)
+    snapshot.reference.update(
+        {"status": VideoStatus.RENDERING_FINALS.value, "error": firestore.DELETE_FIELD, "error_type": firestore.DELETE_FIELD, "updated_at": firestore.SERVER_TIMESTAMP}
+    )
+    background_tasks.add_task(render_final_chapters, video_id, failed_ids)
+    return JSONResponse({"status": VideoStatus.RENDERING_FINALS.value, "retrying": failed_ids}, status_code=202)
+
+
 @router.delete("/video/{video_id}")
 async def delete_video(request: Request, video_id: str):
     if response := _unauthorized(request):
