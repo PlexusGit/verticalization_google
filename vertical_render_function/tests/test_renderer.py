@@ -56,7 +56,7 @@ def test_focal_trajectory_compaction_preserves_endpoints_and_large_changes():
     points = tuple({"time": index, "x": float(index), "y": 0.0} for index in range(100))
     points = points[:50] + ({"time": 50, "x": 500.0, "y": 0.0},) + points[51:]
     compacted = renderer.compact_keyframes(points)
-    assert len(compacted) == 24
+    assert len(compacted) == renderer.MAX_EXPRESSION_KEYFRAMES
     assert compacted[0] == points[0]
     assert compacted[-1] == points[-1]
     assert {"time": 50, "x": 500.0, "y": 0.0} in compacted
@@ -66,7 +66,8 @@ def test_many_focal_points_do_not_generate_an_oversized_expression():
     points = tuple({"time": 10 + index, "x": 400 + index * 5, "y": 540} for index in range(100))
     spec = dataclasses.replace(renderer.validate_request(payload(trim_end=110)), automatic_focal_points=points)
     graph, _ = renderer.build_video_filter(spec, None, None)
-    assert graph.count("if(") <= 92
+    # One conditional per keyframe per axis, two axes, budget of 48 keyframes.
+    assert graph.count("if(") <= 2 * renderer.MAX_EXPRESSION_KEYFRAMES
 
 
 def test_rpp_easing_holds_then_cosine_interpolates():

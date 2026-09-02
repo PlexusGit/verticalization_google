@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     OUTPUT_HEIGHT: int = 1920
     DEFAULT_CAPTION_FONT: str = "DejaVu Sans"
     DEFAULT_CAPTION_FONT_SIZE: int = 54
+    # Must match FOCAL_STRATEGY_VERSION in vertical_render_function/face_detection.py;
+    # cached focal points from older strategies are re-analyzed on the next render.
+    FOCAL_STRATEGY_VERSION: int = 2
 
     SERVICE_NAME: str = "plexus-vertical-cuts"
 

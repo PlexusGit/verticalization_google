@@ -1,4 +1,5 @@
 """ASGI entry point for Plexus Vertical Cuts."""
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -9,6 +10,14 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import settings
 from app.routers import api, auth, views
+
+# Surface INFO logs (render lifecycle, pipeline stages) on the console; without
+# this only WARNING+ would reach the terminal under uvicorn.
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)-5s %(name)s %(message)s",
+    )
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 app = FastAPI(

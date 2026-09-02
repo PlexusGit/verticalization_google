@@ -20,7 +20,7 @@ OUTPUT_HEIGHT = 1920
 TRANSITION_SECONDS = 2.0
 MAX_CAPTIONS = 2_000
 MAX_KEYFRAMES = 10_000
-MAX_EXPRESSION_KEYFRAMES = 24
+MAX_EXPRESSION_KEYFRAMES = 48
 _COLOR_RE = re.compile(r"^(?:#[0-9a-fA-F]{6}|[a-zA-Z]{1,24})$")
 
 
@@ -216,7 +216,13 @@ def compact_keyframes(
 
 
 def keyframe_expression(trim_start: float, duration: float, frames: Sequence[Mapping[str, float]], field: str, default: float) -> str:
-    """Build an ffmpeg expression with RPP easing and absolute-time keyframes."""
+    """Build an ffmpeg expression with RPP easing and absolute-time keyframes.
+
+    Each keyframe contributes a single conditional: hold at the previous value
+    until the transition window opens, then cosine-ease to the target.  The
+    clamp (``max(0, min(transition, t - move_start))``) folds the hold phase
+    into the ease, halving the parser nesting versus one conditional per phase.
+    """
     start = eased_value(trim_start, frames, field, default)
     relevant = [(frame["time"] - trim_start, float(frame[field])) for frame in frames if trim_start < frame["time"] <= trim_start + duration]
     expression, current, previous = "", start, 0.0
@@ -225,8 +231,11 @@ def keyframe_expression(trim_start: float, duration: float, frames: Sequence[Map
         gap = target_time - previous
         transition = min(TRANSITION_SECONDS, gap) if gap > 0 else 0.001
         move_start = target_time - transition
-        expression += f"if(lte(t,{move_start:g}),{current:g},if(lte(t,{target_time:g}),{current:g}+({target:g}-{current:g})*0.5*(1-cos(PI*(t-{move_start:g})/{transition:g})),"
-        closings += 2
+        expression += (
+            f"if(lte(t,{target_time:g}),"
+            f"{current:g}+({target:g}-{current:g})*0.5*(1-cos(PI*max(0,min({transition:g},(t-{move_start:g})))/{transition:g})),"
+        )
+        closings += 1
         current, previous = target, target_time
     return expression + f"{current:g}" + ")" * closings
 
@@ -317,9 +326,16 @@ def build_video_filter(spec: RenderSpec, ass_path: str | None, logo_input_index:
         # drawtext uses text dimensions rather than overlay dimensions.
         pos = overlay.get("position", "top_left")
         text_positions = {"top_left": ("40", "40"), "top_center": ("(w-text_w)/2", "40"), "top_right": ("w-text_w-40", "40"), "center": ("(w-text_w)/2", "(h-text_h)/2"), "bottom_left": ("40", "h-text_h-40"), "bottom_center": ("(w-text_w)/2", "h-text_h-40"), "bottom_right": ("w-text_w-40", "h-text_h-40")}
+        max_width = overlay.get("max_width")
         if overlay.get("x") is not None and overlay.get("y") is not None:
-            x = f"{int(_number(overlay['x'], f'text_overlays[{index}].x', 0))}"
+            x_val = int(_number(overlay['x'], f'text_overlays[{index}].x', 0))
             y = f"{int(_number(overlay['y'], f'text_overlays[{index}].y', 0))}"
+            if max_width is not None and "\n" in overlay["text"]:
+                # Center multi-line text within the title box.
+                box_w = int(_number(max_width, f"text_overlays[{index}].max_width", 1))
+                x = f"{x_val}+({box_w}-text_w)/2"
+            else:
+                x = f"{x_val}"
         else:
             x, y = text_positions.get(pos, text_positions["top_left"])
         label = f"vtext{index}"

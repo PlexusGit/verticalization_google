@@ -326,7 +326,7 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
             "updated_at": firestore.SERVER_TIMESTAMP,
         }
     )
-    chapter_ref.update({f"{kind}_status": "PROCESSING", "updated_at": firestore.SERVER_TIMESTAMP})
+    chapter_ref.update({f"{kind}_status": "PROCESSING", f"{kind}_render_id": render_id, "updated_at": firestore.SERVER_TIMESTAMP})
 
     chapter_start = float(chapter["start_seconds"])
     captions = [
@@ -367,7 +367,7 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
         rendered_text = text["text"]
         if max_width:
             while True:
-                characters_per_line = max(8, int(max_width / max(1, font_size * 0.58)))
+                characters_per_line = max(8, int(max_width / max(1, font_size * 0.62)))
                 lines = textwrap.wrap(rendered_text, width=characters_per_line, break_long_words=False) or [rendered_text]
                 if not max_height or len(lines) * font_size * 1.2 <= max_height or font_size <= 16:
                     rendered_text = "\n".join(lines)
@@ -399,7 +399,13 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
         "mode": persisted_options.get("layout_mode", "center_crop"),
         "keyframes_top": persisted_options.get("keyframes_top") or [],
         "keyframes_bottom": persisted_options.get("keyframes_bottom") or [],
-        "automatic_focal_points": persisted_options.get("automatic_focal_points") or [],
+        # Cached focal points are only reused when produced by the current
+        # strategy; otherwise the worker re-analyzes with the latest logic.
+        "automatic_focal_points": (
+            persisted_options.get("automatic_focal_points") or []
+        )
+        if persisted_options.get("focal_strategy_version") == settings.FOCAL_STRATEGY_VERSION
+        else [],
         "captions": captions,
         "caption_style": {
             "font": caption_style.get("font", settings.DEFAULT_CAPTION_FONT),
@@ -428,11 +434,24 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
             "duration_seconds": float(chapter["end_seconds"]) - chapter_start,
         },
     )
+    logger.info(
+        "Render vertical %s INICIADO video=%s chapter=%s render=%s trecho=%.1fs–%.1fs (%.0fs) logo=%s texto=%s",
+        kind,
+        video_id,
+        chapter_id,
+        render_id,
+        chapter_start,
+        float(chapter["end_seconds"]),
+        float(chapter["end_seconds"]) - chapter_start,
+        bool(logo),
+        bool(text_overlays),
+    )
     try:
         result = vertical_render.submit(payload)
         detected_points = result.get("automatic_focal_points") or persisted_options.get("automatic_focal_points") or []
         if detected_points:
             persisted_options["automatic_focal_points"] = detected_points
+            persisted_options["focal_strategy_version"] = result.get("focal_strategy_version") or settings.FOCAL_STRATEGY_VERSION
         output_path = result.get("gcs_path") or result.get("output_gcs_path") or target
         managed_prefix = f"gs://{settings.BUCKET_NAME}/"
         if output_path.startswith(managed_prefix):
@@ -446,15 +465,28 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
                 "updated_at": firestore.SERVER_TIMESTAMP,
             }
         )
-        chapter_ref.update(
-            {
-                f"{kind}_status": "COMPLETED",
-                f"{kind}_gcs_path": output_path,
-                f"{kind}_render_id": render_id,
-                "render_options": persisted_options,
-                "updated_at": firestore.SERVER_TIMESTAMP,
-            }
-        )
+        # A newer render may have been dispatched while this one was in flight
+        # (e.g. the reviewer changed the chapter bounds); only the latest
+        # render may update the chapter's visible draft/final fields.
+        fresh = chapter_ref.get().to_dict() or {}
+        if fresh.get(f"{kind}_render_id") == render_id:
+            chapter_ref.update(
+                {
+                    f"{kind}_status": "COMPLETED",
+                    f"{kind}_gcs_path": output_path,
+                    f"{kind}_render_id": render_id,
+                    "render_options": persisted_options,
+                    "updated_at": firestore.SERVER_TIMESTAMP,
+                }
+            )
+        else:
+            logger.info(
+                "Render %s %s concluído porém superado por %s; capítulo %s mantém o render mais recente",
+                render_id,
+                kind,
+                fresh.get(f"{kind}_render_id"),
+                chapter_id,
+            )
         events.record(
             video_id,
             stage="render",
@@ -462,12 +494,30 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
             message=f"Renderização {kind} concluída para {chapter_id}",
             details={"chapter_id": chapter_id, "render_id": render_id, "kind": kind, "gcs_path": output_path},
         )
+        logger.info(
+            "Render vertical %s CONCLUÍDO video=%s chapter=%s render=%s saída=%s",
+            kind,
+            video_id,
+            chapter_id,
+            render_id,
+            output_path,
+        )
         return {"render_id": render_id, "gcs_path": output_path, "status": "COMPLETED"}
     except Exception as exc:
         render_ref.update({"status": "ERROR", "error": str(exc), "updated_at": firestore.SERVER_TIMESTAMP})
-        chapter_ref.update({f"{kind}_status": "ERROR", f"{kind}_error": str(exc), "updated_at": firestore.SERVER_TIMESTAMP})
-        if final:
-            chapter_ref.update({"status": "ERROR", "updated_at": firestore.SERVER_TIMESTAMP})
+        fresh = chapter_ref.get().to_dict() or {}
+        if fresh.get(f"{kind}_render_id") == render_id:
+            chapter_ref.update({f"{kind}_status": "ERROR", f"{kind}_error": str(exc), "updated_at": firestore.SERVER_TIMESTAMP})
+            if final:
+                chapter_ref.update({"status": "ERROR", "updated_at": firestore.SERVER_TIMESTAMP})
+        else:
+            logger.info(
+                "Render %s %s falhou porém foi superado por %s; capítulo %s mantém o render mais recente",
+                render_id,
+                kind,
+                fresh.get(f"{kind}_render_id"),
+                chapter_id,
+            )
         events.record(
             video_id,
             stage="render",
@@ -482,7 +532,16 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
             },
             level="ERROR",
         )
-        logger.error("Render %s failed for video=%s chapter=%s: %s", kind, video_id, chapter_id, exc, exc_info=True)
+        logger.error(
+            "Render vertical %s FALHOU video=%s chapter=%s render=%s erro=%s: %s",
+            kind,
+            video_id,
+            chapter_id,
+            render_id,
+            type(exc).__name__,
+            exc,
+            exc_info=True,
+        )
         raise
 
 
@@ -498,6 +557,7 @@ def render_final_chapters(video_id: str, chapter_ids: list[str]) -> None:
         message="Renderização dos vídeos finais iniciada",
         details={"chapter_ids": chapter_ids, "chapter_count": len(chapter_ids)},
     )
+    logger.info("Lote de renders finais INICIADO video=%s capítulos=%s", video_id, chapter_ids)
     errors: list[str] = []
     for chapter_id in chapter_ids:
         chapter = video_ref.collection("chapters").document(chapter_id).get().to_dict() or {}

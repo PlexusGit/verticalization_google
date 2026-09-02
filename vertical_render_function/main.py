@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 import functions_framework
 from google.cloud import firestore, storage
 
-from face_detection import analyze_focal_points
+from face_detection import FOCAL_STRATEGY_VERSION, analyze_focal_points
 from renderer import RenderSpec, ValidationError, compact_keyframes, render, validate_request, write_ass_captions
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -154,6 +154,15 @@ def vertical_render(request: Any):
         return ({"error": str(exc)}, 400, _cors_headers())
 
     update_status(video_id, render_id, chapter_id, "PROCESSING", started_at=firestore.SERVER_TIMESTAMP, error=firestore.DELETE_FIELD)
+    logger.info(
+        "Render recebido video=%s chapter=%s render=%s trecho=%.1fs–%.1fs modo=%s",
+        video_id,
+        chapter_id or "-",
+        render_id,
+        spec.trim_start,
+        spec.trim_end,
+        spec.mode,
+    )
     try:
         # TemporaryDirectory guarantees removal on success, exceptions, and client
         # disconnects. Randomized names avoid collisions under Cloud Run concurrency.
@@ -172,7 +181,7 @@ def vertical_render(request: Any):
             output_uri = _upload(spec.output_gcs_path, output_path)
 
         update_status(video_id, render_id, chapter_id, "COMPLETED", output_gcs_path=output_uri, completed_at=firestore.SERVER_TIMESTAMP, error=firestore.DELETE_FIELD)
-        return ({"status": "COMPLETED", "video_id": video_id, "render_id": render_id, "chapter_id": chapter_id, "output_gcs_path": output_uri, "width": 1080, "height": 1920, "automatic_focal_points": list(spec.automatic_focal_points)}, 200, _cors_headers())
+        return ({"status": "COMPLETED", "video_id": video_id, "render_id": render_id, "chapter_id": chapter_id, "output_gcs_path": output_uri, "width": 1080, "height": 1920, "automatic_focal_points": list(spec.automatic_focal_points), "focal_strategy_version": FOCAL_STRATEGY_VERSION}, 200, _cors_headers())
     except ValidationError as exc:
         # Some style values are validated while assembling the filter graph.
         update_status(video_id, render_id, chapter_id, "ERROR", error=str(exc))

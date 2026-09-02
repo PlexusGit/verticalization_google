@@ -33,6 +33,7 @@ def submit(payload: dict) -> dict:
         raise RuntimeError("VERTICAL_RENDER_URL não configurada")
     url = settings.VERTICAL_RENDER_URL.rstrip("/") + "/"
     headers = {"X-API-Key": settings.SECURITY_TOKEN}
+    logger.info("Enviando render ao worker %s (render_id=%s, capítulo=%s)", url, payload.get("render_id"), payload.get("chapter_id"))
     last_exc: Exception | None = None
     for attempt in range(_MAX_RETRIES + 1):
         try:

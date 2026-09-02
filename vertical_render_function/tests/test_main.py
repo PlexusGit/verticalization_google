@@ -5,6 +5,7 @@ from flask import Flask, request
 import pytest
 
 import main
+from renderer import MAX_EXPRESSION_KEYFRAMES
 
 
 @pytest.fixture
@@ -96,7 +97,7 @@ def test_cached_points_are_compacted_without_face_detection(monkeypatch):
     analyze = Mock()
     monkeypatch.setattr(main, "analyze_focal_points", analyze)
     result = main._add_automatic_focus(spec, "/tmp/source")
-    assert len(result.automatic_focal_points) == 24
+    assert len(result.automatic_focal_points) == MAX_EXPRESSION_KEYFRAMES
     analyze.assert_not_called()
 
 

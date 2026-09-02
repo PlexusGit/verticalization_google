@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 import os
 import tempfile
 from typing import Any
@@ -79,21 +80,56 @@ def _template_branding(template: dict, video: dict, chapter: dict) -> dict:
     title = title.replace("{chapter_title}", str(chapter.get("title") or ""))
     title = title.replace("{video_title}", str(video.get("title") or ""))
     geometry = template.get("title_geometry") or {}
+    # Provide defaults for templates created before geometry fields existed.
+    title_position = template.get("title_position") or "top-center"
+    title_defaults = _default_title_geometry(title_position)
+    logo = template.get("logo")
+    if logo:
+        logo = dict(logo)
+        logo_defaults = _default_logo_geometry(logo.get("position", "top-right"))
+        for key, default in logo_defaults.items():
+            if logo.get(key) is None:
+                logo[key] = default
     return {
-        "logo": template.get("logo"),
+        "logo": logo,
         "text": {
             "text": title,
-            "position": template.get("title_position") or "top-center",
+            "position": title_position,
             "font_size": geometry.get("font_size", 54),
             "color": "#FFFFFF",
             "background_color": "#000000",
             "background_opacity": 0.55,
-            "x_percent": geometry.get("x_percent"),
-            "y_percent": geometry.get("y_percent"),
-            "width_percent": geometry.get("width_percent"),
-            "height_percent": geometry.get("height_percent"),
+            "x_percent": geometry.get("x_percent", title_defaults["x_percent"]),
+            "y_percent": geometry.get("y_percent", title_defaults["y_percent"]),
+            "width_percent": geometry.get("width_percent", title_defaults["width_percent"]),
+            "height_percent": geometry.get("height_percent", title_defaults["height_percent"]),
         },
     }
+
+
+def _default_logo_geometry(position: str) -> dict:
+    """Fallback logo geometry matching the template builder defaults."""
+    presets = {
+        "top-right": {"x_percent": 68, "y_percent": 5, "height_percent": 10},
+        "top-left": {"x_percent": 5, "y_percent": 5, "height_percent": 10},
+        "bottom-right": {"x_percent": 68, "y_percent": 85, "height_percent": 10},
+        "bottom-left": {"x_percent": 5, "y_percent": 85, "height_percent": 10},
+    }
+    return presets.get(position, presets["top-right"])
+
+
+def _default_title_geometry(position: str) -> dict:
+    """Fallback title geometry matching the template builder defaults."""
+    presets = {
+        "top-center": {"x_percent": 10, "y_percent": 18, "width_percent": 80, "height_percent": 12},
+        "top-left": {"x_percent": 5, "y_percent": 18, "width_percent": 80, "height_percent": 12},
+        "top-right": {"x_percent": 15, "y_percent": 18, "width_percent": 80, "height_percent": 12},
+        "center": {"x_percent": 10, "y_percent": 44, "width_percent": 80, "height_percent": 12},
+        "bottom-center": {"x_percent": 10, "y_percent": 80, "width_percent": 80, "height_percent": 12},
+        "bottom-left": {"x_percent": 5, "y_percent": 80, "width_percent": 80, "height_percent": 12},
+        "bottom-right": {"x_percent": 15, "y_percent": 80, "width_percent": 80, "height_percent": 12},
+    }
+    return presets.get(position, presets["top-center"])
 
 
 def _daily_limit_reached(owner_email: str) -> bool:
@@ -481,7 +517,7 @@ async def subtitles(request: Request, video_id: str):
 
 
 @router.put("/video/{video_id}/chapters/{chapter_id}")
-async def update_chapter(request: Request, video_id: str, chapter_id: str):
+async def update_chapter(request: Request, video_id: str, chapter_id: str, background_tasks: BackgroundTasks):
     """Save reviewer edits and derive relative subtitles when bounds change."""
 
     if response := _unauthorized(request):
@@ -489,22 +525,58 @@ async def update_chapter(request: Request, video_id: str, chapter_id: str):
     video = _video_snapshot(video_id)
     if not video.exists:
         return JSONResponse({"error": "Vídeo não encontrado"}, status_code=404)
+    chapter_ref = video.reference.collection("chapters").document(chapter_id)
+    snapshot = chapter_ref.get()
+    if not snapshot.exists:
+        return JSONResponse({"error": "Capítulo não encontrado"}, status_code=404)
     try:
         chapter = ChapterInput.model_validate(await request.json())
     except ValidationError as exc:
         return JSONResponse({"error": exc.errors()}, status_code=422)
-    if chapter.end_seconds > float((video.to_dict() or {}).get("duration_seconds") or chapter.end_seconds):
+    video_data = video.to_dict() or {}
+    if chapter.end_seconds > float(video_data.get("duration_seconds") or chapter.end_seconds):
         return JSONResponse({"error": "O capítulo ultrapassa a duração do vídeo"}, status_code=400)
+    previous = snapshot.to_dict() or {}
+    bounds_changed = (
+        float(previous.get("start_seconds") or 0) != chapter.start_seconds
+        or float(previous.get("end_seconds") or 0) != chapter.end_seconds
+    )
     data = chapter.model_dump(mode="json", exclude={"id"})
     if not data["subtitle_text"]:
-        data["subtitle_text"] = srt.slice_srt((video.to_dict() or {}).get("subtitle_text", ""), chapter.start_seconds, chapter.end_seconds)
+        data["subtitle_text"] = srt.slice_srt(video_data.get("subtitle_text", ""), chapter.start_seconds, chapter.end_seconds)
     data["updated_at"] = firestore.SERVER_TIMESTAMP
-    video.reference.collection("chapters").document(chapter_id).set(data, merge=True)
+    chapter_ref.set(data, merge=True)
+    # The draft must match the declared bounds; re-render when they change.
+    if bounds_changed and _can_render_draft(video_data):
+        background_tasks.add_task(render_chapter, video_id, chapter_id, RenderRequest(), final=False)
+        logging.getLogger("plexus.api").info(
+            "Limites do capítulo %s alterados (%s–%s → %s–%s); rascunho reagendado video=%s",
+            chapter_id,
+            previous.get("start_seconds"),
+            previous.get("end_seconds"),
+            chapter.start_seconds,
+            chapter.end_seconds,
+            video_id,
+        )
     return {"ok": True}
 
 
+def _can_render_draft(video_data: dict) -> bool:
+    """Draft renders need a source and a pipeline that is not mid-flight."""
+
+    has_source = video_data.get("gcs_high_path") or video_data.get("gcs_source_path")
+    busy = {
+        VideoStatus.UPLOADING.value,
+        VideoStatus.TRANSCODING.value,
+        VideoStatus.TRANSCRIBING.value,
+        VideoStatus.SUGGESTING.value,
+        VideoStatus.RENDERING_DRAFTS.value,
+    }
+    return bool(has_source) and video_data.get("status") not in busy
+
+
 @router.post("/video/{video_id}/chapters")
-async def add_chapter(request: Request, video_id: str):
+async def add_chapter(request: Request, video_id: str, background_tasks: BackgroundTasks):
     if response := _unauthorized(request):
         return response
     video = _video_snapshot(video_id)
@@ -514,12 +586,31 @@ async def add_chapter(request: Request, video_id: str):
         chapter = ChapterInput.model_validate(await request.json())
     except ValidationError as exc:
         return JSONResponse({"error": exc.errors()}, status_code=422)
+    video_data = video.to_dict() or {}
     chapter_id = f"chapter_{video.reference.collection('chapters').document().id[:12]}"
     data = chapter.model_dump(mode="json", exclude={"id"})
     if not data["subtitle_text"]:
-        data["subtitle_text"] = srt.slice_srt((video.to_dict() or {}).get("subtitle_text", ""), chapter.start_seconds, chapter.end_seconds)
+        data["subtitle_text"] = srt.slice_srt(video_data.get("subtitle_text", ""), chapter.start_seconds, chapter.end_seconds)
     data.update({"id": chapter_id, "created_at": firestore.SERVER_TIMESTAMP, "updated_at": firestore.SERVER_TIMESTAMP})
     video.reference.collection("chapters").document(chapter_id).set(data)
+    # Manually added chapters deserve a draft just like suggested ones; skip
+    # while the pipeline is still producing the source or the first drafts.
+    if _can_render_draft(video_data):
+        background_tasks.add_task(render_chapter, video_id, chapter_id, RenderRequest(), final=False)
+        logging.getLogger("plexus.api").info(
+            "Novo capítulo %s agendado para render de rascunho automático video=%s", chapter_id, video_id
+        )
+    elif not (video_data.get("gcs_high_path") or video_data.get("gcs_source_path")):
+        logging.getLogger("plexus.api").warning(
+            "Novo capítulo %s sem render automático: vídeo %s ainda não possui fonte", chapter_id, video_id
+        )
+    else:
+        logging.getLogger("plexus.api").warning(
+            "Novo capítulo %s sem render automático: vídeo %s em status %s",
+            chapter_id,
+            video_id,
+            video_data.get("status"),
+        )
     return JSONResponse({"chapter_id": chapter_id}, status_code=201)
 
 
