@@ -7,8 +7,8 @@ Estratégia (versão 2):
   reversa) mantém o enquadramento entre amostras, com CSRT como reserva.
 - O foco prediz a trajetória (lead por velocidade) e a suavização se adapta à
   velocidade e à confiança da detecção.
-- Sem rostos, um mapa de saliência (energia de movimento + gradientes) mantém
-  o corte no conteúdo.
+- Sem rostos, o corte mantém a última posição por alguns segundos e depois
+  volta ao centro do vídeo.
 - Entre várias faces, a atividade dos lábios escolhe quem fala, com histerese.
 """
 from __future__ import annotations
@@ -24,13 +24,14 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 MODEL_PATH = Path(__file__).parent / "models" / "face_detection_yunet_2023mar.onnx"
-FOCAL_STRATEGY_VERSION = 2
+FOCAL_STRATEGY_VERSION = 3
 MAX_ANALYSIS_FRAMES = 240
 MIN_SAMPLE_INTERVAL_SECONDS = 0.5
 MAX_ANALYSIS_WIDTH = 640
-FACE_HOLD_SECONDS = 10.0
-SWITCH_CONFIRM_SECONDS = 1.5
-MIN_FOCAL_CHANGE_RATIO = 0.12
+FACE_HOLD_SECONDS = 3.0
+SWITCH_CONFIRM_SECONDS = 0.6
+SPEAKER_SWITCH_RATIO = 1.2
+MIN_FOCAL_CHANGE_RATIO = 0.15
 FOCUS_AVERAGE_SECONDS = 5.0
 FAST_AVERAGE_SECONDS = 1.0
 TRACK_MATCH_RATIO = 0.70
@@ -56,12 +57,6 @@ EDGE_CUT_RATIO = 0.38
 FADE_CORRELATION_HIGH = 0.60
 FADE_CONFIRM_SAMPLES = 3
 SCENE_BLEND_SECONDS = 0.8
-
-# Saliency fallback for segments without faces.  The gate is the peak-to-mean
-# contrast of the raw saliency map: flat frames sit near 1.0, pop-out content
-# well above 2.
-SALIENCY_WIDTH = 96
-SALIENCY_PEAK_THRESHOLD = 2.0
 
 # Two-pass sampling: cheap scan finds active spans; face detection concentrates
 # where things happen.
@@ -424,63 +419,6 @@ def lip_energy(previous_gray: object, current_gray: object, box: Box | None) -> 
     return float(np.mean(np.abs(current_crop - previous_crop)) / 255.0)
 
 
-def content_saliency(previous_gray: object, current_gray: object) -> tuple[object | None, float]:
-    """Motion + gradient content map for segments without faces.
-
-    Returns ``(map normalized 0-1, contrast)`` where contrast is the raw
-    peak-to-mean ratio used to reject flat, featureless frames.
-    """
-    height, width = current_gray.shape[:2]
-    if width < 16 or height < 16:
-        return None, 0.0
-    current = current_gray.astype(np.float32)
-    gradient = (
-        cv2.Sobel(current, cv2.CV_32F, 1, 0, ksize=3) ** 2
-        + cv2.Sobel(current, cv2.CV_32F, 0, 1, ksize=3) ** 2
-    )
-    gradient = cv2.GaussianBlur(gradient, (0, 0), 3.0)
-
-    def normalize(map_: object) -> object:
-        peak = float(map_.max())
-        return map_ / peak if peak > 0 else map_
-
-    if previous_gray is not None and previous_gray.shape == current_gray.shape:
-        motion = cv2.GaussianBlur(cv2.absdiff(current_gray, previous_gray).astype(np.float32), (0, 0), 3.0)
-        combined = 0.4 * normalize(gradient) + 0.6 * normalize(motion)
-    else:
-        combined = normalize(gradient)
-    raw_mean, raw_peak = float(combined.mean()), float(combined.max())
-    if raw_peak <= 0:
-        return None, 0.0
-    contrast = raw_peak / (raw_mean + 1e-6)
-    combined = np.maximum(combined - raw_mean, 0.0)
-    normalized_peak = float(combined.max())
-    if normalized_peak <= 0:
-        return None, contrast
-    return combined / normalized_peak, contrast
-
-
-def saliency_focus(
-    saliency: object,
-    analyzed_width: int,
-    analyzed_height: int,
-    source_width: int,
-    source_height: int,
-) -> tuple[float, float] | None:
-    """Centroid of the top saliency quartile, mapped back to source coords."""
-    map_height, map_width = saliency.shape[:2]
-    threshold = float(np.quantile(saliency, 0.75))
-    mask = saliency >= threshold
-    total = float(saliency[mask].sum())
-    if total <= 0:
-        return None
-    ys, xs = np.nonzero(mask)
-    weights = saliency[ys, xs]
-    center_x = float((xs * weights).sum() / total) / map_width * analyzed_width
-    center_y = float((ys * weights).sum() / total) / map_height * analyzed_height
-    return center_x * source_width / analyzed_width, center_y * source_height / analyzed_height
-
-
 def frame_histogram(frame: object) -> object:
     analyzed = analysis_frame(frame)
     gray = cv2.cvtColor(analyzed, cv2.COLOR_BGR2GRAY)
@@ -721,7 +659,7 @@ def _track_trajectory(
                     scores = speaker_scores(faces, speaker_center, activities, crop_width)
                     incumbent_score = scores[incumbent_index]
                     for index in range(len(faces)):
-                        if index != incumbent_index and scores[index] > incumbent_score * 1.5:
+                        if index != incumbent_index and scores[index] > incumbent_score * SPEAKER_SWITCH_RATIO:
                             if challenger_index is None or scores[index] > scores[challenger_index]:
                                 challenger_index = index
                     if challenger_index is not None:
@@ -809,15 +747,6 @@ def _track_trajectory(
                     meta["tracked"] += 1
                 else:
                     tracker = None
-
-        if target is None:
-            saliency, contrast = content_saliency(previous_gray, gray)
-            if saliency is not None and contrast >= SALIENCY_PEAK_THRESHOLD:
-                saliency_target = saliency_focus(saliency, analyzed_width, analyzed_height, source_width, source_height)
-                if saliency_target is not None:
-                    target = saliency_target
-                    observed = True
-                    confidence = 0.5
 
         # Velocity comes from the observed targets, not the stabilized focus:
         # measuring the lagged crop would underestimate speed and permanently

@@ -1,6 +1,6 @@
-# Enquadramento automático (estratégia v2)
+# Enquadramento automático (estratégia v3)
 
-Este documento descreve o comportamento atual do algoritmo de enquadramento automático do Plexus Vertical Cuts, desde a análise do vídeo até a geração do recorte vertical pelo FFmpeg. Esta é a **versão 2 da estratégia** (`FOCAL_STRATEGY_VERSION = 2`): além do rastreamento facial, ela adiciona detecção de locutor ativo, previsão de movimento, suavização adaptativa, composição com respiro de cabeça, fallback por saliência para trechos sem rostos e amostragem em duas passadas.
+Este documento descreve o comportamento atual do algoritmo de enquadramento automático do Plexus Vertical Cuts, desde a análise do vídeo até a geração do recorte vertical pelo FFmpeg. Esta é a **versão 3 da estratégia** (`FOCAL_STRATEGY_VERSION = 3`): além do rastreamento facial, ela adiciona detecção de locutor ativo, previsão de movimento, suavização adaptativa, composição com respiro de cabeça e amostragem em duas passadas.
 
 ## Objetivo
 
@@ -15,10 +15,11 @@ O sistema continua econômico:
 - reutiliza resultados entre o rascunho e o render final, com controle de versão;
 - mantém o recorte central como fallback seguro.
 
-A versão 2 também cobre dois casos que antes ficavam sem solução:
+A estratégia atual também cobre um caso que antes ficava sem solução:
 
-1. **Quem está falando**: entre vários rostos, a atividade dos lábios escolhe o locutor, com histerese contra trocas impulsivas.
-2. **Trechos sem rostos**: um mapa de saliência (movimento + gradientes) mantém o corte no conteúdo relevante em vez de travar no centro.
+1. **Quem está falando**: entre vários rostos, a atividade dos lábios escolhe o locutor, com histerese curta contra trocas impulsivas.
+
+Sem rostos, o comportamento é deliberadamente simples: manter o último enquadramento por alguns segundos e recentralizar.
 
 ## Modos de enquadramento
 
@@ -53,7 +54,7 @@ Seleção do foco (locutor ativo + grupo + composição)
 Fluxo óptico / tracker corporal durante ausência facial
        │
        ▼
-Saliência (movimento + gradientes) quando não há rostos
+Recentralizar quando a ausência se prolonga
        │
        ▼
 Previsão de velocidade + suavização adaptativa
@@ -101,7 +102,7 @@ vertical_render_function/models/face_detection_yunet_2023mar.onnx
 
 Configuração: confiança mínima `0,65`, limiar de NMS `0,3`, rostos menores que 18 × 18 pixels ignorados. Licença MIT preservada em `vertical_render_function/models/LICENSE`.
 
-Além da caixa e da confiança, a versão 2 consome os **5 landmarks** do YuNet (olho direito, olho esquerdo, nariz e cantos da boca). Eles alimentam duas funções novas:
+Além da caixa e da confiança, a estratégia atual consome os **5 landmarks** do YuNet (olho direito, olho esquerdo, nariz e cantos da boca). Eles alimentam duas funções novas:
 
 - **direção do olhar**: a posição do nariz em relação ao ponto médio dos olhos indica para onde a pessoa vira o rosto;
 - **região da boca**: base para medir a atividade labial (detecção do locutor).
@@ -129,7 +130,7 @@ Quando há medição labial, o score passa a privilegiar quem fala:
 
 ### Histerese do locutor
 
-O locutor atual só perde o foco quando um desafiante sustenta um score **1,5× maior** por pelo menos **1,5 segundo**. Detecções isoladas ou picos curtos de fala não trocam o enquadramento. Quando o locutor atual desaparece do frame, o melhor candidato assume imediatamente.
+O locutor atual só perde o foco quando um desafiante sustenta um score **1,2× maior** por pelo menos **0,6 segundo**. Detecções isoladas ou picos curtos de fala não trocam o enquadramento. Quando o locutor atual desaparece do frame, o melhor candidato assume imediatamente.
 
 ### Rostos próximos
 
@@ -147,7 +148,7 @@ Para fontes 16:9 o crop ocupa toda a altura da fonte; nesse caso o eixo Y fica f
 
 ## 6. Estabilidade e suavização adaptativa
 
-A versão 2 substitui a suavização fixa por um perfil que reage à velocidade e à confiança:
+A estratégia atual substitui a suavização fixa por um perfil que reage à velocidade e à confiança:
 
 **Velocidade observada.** A velocidade do alvo é estimada a partir dos **alvos observados** (janela de 1,2 segundo), não do crop estabilizado. Medir o crop já atrasado subestimava a velocidade e mantinha o sistema permanentemente lento.
 
@@ -158,14 +159,14 @@ A versão 2 substitui a suavização fixa por um perfil que reage à velocidade 
 - movimento lento (abaixo de 25% da largura do crop por segundo): janela de **5 segundos** — estabilidade máxima;
 - movimento rápido: janela de **1 segundo** — a média longa faria o crop ficar para trás.
 
-**Zona morta adaptativa.** Deslocamentos menores que **12%** da largura do crop (mínimo de 8 pixels) não geram movimento; com o sujeito em movimento rápido, a zona cai para **6%**, permitindo que o crop acompanhe.
+**Zona morta adaptativa.** Deslocamentos menores que **15%** da largura do crop (mínimo de 8 pixels) não geram movimento; com o sujeito em movimento rápido, a zona cai para **6%**, permitindo que o crop acompanhe.
 
 **Ganho adaptativo.** Ao superar a zona morta, o algoritmo aplica:
 
 - 34% da diferença em regime normal;
 - 55% com o sujeito em movimento rápido;
 - 62% em saltos grandes (acima de 90% da largura do crop) ou mudanças de cena;
-- com confiança de detecção abaixo de `0,75` (tracker, fluxo ou saliência), o ganho é multiplicado por 0,6 — o crop fica mais pesado quando a referência é menos confiável.
+- com confiança de detecção abaixo de `0,75` (tracker corporal ou fluxo óptico), o ganho é multiplicado por 0,6 — o crop fica mais pesado quando a referência é menos confiável.
 
 **Emissão de keyframes.** Um novo keyframe é criado quando: é o primeiro do capítulo, ocorre mudança de cena, ou o foco estabilizado se afasta da zona morta correspondente do último keyframe emitido.
 
@@ -177,18 +178,9 @@ Quando o rosto desaparece, duas camadas mantêm o enquadramento:
 
 **Tracker corporal (CSRT, com reserva MIL).** Para lacunas maiores, o último frame facial semeia um tracker sobre a região expandida de cabeça, ombros e torso (limitada a 72% da largura e 78% da altura do frame analisado). O worker usa `TrackerCSRT` quando a build do OpenCV oferece (a imagem de produção usa `opencv-contrib-python-headless`) e recua para `TrackerMIL` caso contrário. Cada amostra rastreada com sucesso atualiza a semente, evitando que um tracker antigo seja reaproveitado.
 
-**Retenção e fallback.** A última posição confirmada é mantida por até **10 segundos**; após isso, o sistema tenta a saliência (próxima seção) e, em último caso, retorna suavemente ao centro.
+**Retenção e fallback.** A última posição confirmada é mantida por até **3 segundos**; após isso, o corte volta suavemente ao centro do vídeo.
 
-## 8. Saliência para trechos sem rostos
-
-Quando não há rostos nem rastreamento válido, um mapa de saliência decide onde o corte deve ficar:
-
-- **energia de movimento**: diferença absoluta entre o frame atual e o anterior (peso 0,6);
-- **densidade de gradientes**: magnitude Sobel do frame atual (peso 0,4) — captura produtos, telas, textos e cenário relevante mesmo parados.
-
-O foco é o centróide do quartil superior do mapa combinado. Um contraste (pico ÷ média) abaixo de `2,0` rejeita frames sem conteúdo destacável — frames chapados ficam próximos de 1,0 — e o sistema mantém a última posição ou volta ao centro. Isso substitui o antigo comportamento de "sem rosto = crop central fixo".
-
-## 9. Mudanças de cena
+## 8. Mudanças de cena
 
 Cada amostra gera um histograma de 32 níveis de cinza e uma medida de pixels alterados (diferença em resolução reduzida):
 
@@ -197,13 +189,13 @@ Cada amostra gera um histograma de 32 níveis de cinza e uma medida de pixels al
 
 Em qualquer um dos casos, o estado de rastreamento (locutor, candidato, semente, tracker, fluxo) é descartado para impedir que uma identidade da cena anterior contamine a seguinte. Diferente das versões anteriores, **o foco não salta para o centro**: um keyframe é emitido no limite da cena com o foco anterior, e o novo foco entra suavemente — o easing de 2 segundos do renderer costura a transição entre as cenas.
 
-## 10. Compactação dos keyframes
+## 9. Compactação dos keyframes
 
 A análise pode produzir dezenas de posições. Inserir todas no filtro `crop` cria expressões profundamente aninhadas. Antes da renderização, a trajetória é compactada para **no máximo 48 keyframes** (era 24 na versão 1).
 
 O algoritmo remove iterativamente o ponto cuja ausência produz o menor desvio em relação à interpolação entre seus vizinhos, preservando primeiro e último pontos, mudanças grandes, cortes de cena e curvas relevantes. A compactação também é aplicada a keyframes antigos recuperados do Firestore.
 
-## 11. Geração do crop no FFmpeg
+## 10. Geração do crop no FFmpeg
 
 Para uma fonte horizontal, o crop usa toda a altura disponível e calcula a largura correspondente à proporção 9:16. Exemplo para uma fonte 640 × 360:
 
@@ -216,7 +208,7 @@ As posições focais viram expressões temporais para X e Y. Cada keyframe contr
 
 Depois do crop e do redimensionamento, o pipeline aplica legendas ASS, logo, textos de marca, codificação H.264/AAC e `faststart`.
 
-## 12. Persistência e controle de versão
+## 11. Persistência e controle de versão
 
 Os pontos focais calculados durante o rascunho são devolvidos pelo worker e armazenados em:
 
@@ -227,13 +219,21 @@ render_options.focal_strategy_version
 
 O render final reutiliza esses pontos **apenas quando a versão da estratégia coincide** (`FOCAL_STRATEGY_VERSION` no worker e em `app/config.py`). Ao evoluir o algoritmo, aumente a versão nos dois lugares: capítulos com pontos antigos são reanalisados no próximo render em vez de reaproveitar trajetórias obsoletas.
 
-## 13. Fallbacks
+A análise é executada automaticamente nestes momentos:
+
+- **capítulo criado** (sugerido ou adicionado manualmente): o rascunho é renderizado com os limites atuais;
+- **limites alterados e salvos**: um novo rascunho é disparado para o recorte acompanhar os novos limites;
+- **render final**: reutiliza os pontos do rascunho quando a versão coincide.
+
+Quando dois renders do mesmo capítulo estão em voo (por exemplo, o rascunho original ainda em processamento depois de uma edição de limites), apenas o mais recente atualiza os campos visíveis do capítulo; o render superado é registrado no próprio documento de render e ignorado.
+
+## 12. Fallbacks
 
 O recorte central é usado quando:
 
 - o modelo YuNet não está disponível;
 - o vídeo não pode ser aberto para análise;
-- nenhuma face é encontrada e a saliência não atinge o contraste mínimo;
+- nenhuma face é encontrada e a retenção expira;
 - a análise lança uma exceção;
 - não existem keyframes automáticos válidos.
 
@@ -241,11 +241,7 @@ Uma falha na detecção nunca impede a renderização do capítulo.
 
 ## Avaliação
 
-`vertical_render_function/tests/test_focal_quality.py` contém o harness de qualidade: testes unitários das primitivas (fluxo óptico, saliência, composição, locutor, plano de amostragem) e um clip sintético com um sujeito em movimento conhecido, medindo:
-
-- **% do tempo com o sujeito dentro do crop** (atual: 100% no clip de referência);
-- **jitter** — maior passo entre keyframes consecutivos;
-- **latência de troca** após cortes.
+`vertical_render_function/tests/test_focal_quality.py` contém o harness de qualidade: testes unitários das primitivas (fluxo óptico, composição, locutor, plano de amostragem) e um clip sintético sem rostos verificando que a trajetória recentraliza após a janela de retenção.
 
 Rode com `PYTHONPATH=. ../.venv/bin/python -m pytest tests/test_focal_quality.py` a partir de `vertical_render_function/`.
 
@@ -279,7 +275,6 @@ A prioridade de seleção considera duração da track, área média, confiança
 - `split_stack` ainda depende de âncoras manuais;
 - reflexos, telas e fotografias podem ser reconhecidos como rostos;
 - rostos muito pequenos, ocultos ou de perfil podem não ser detectados;
-- a saliência não distingue conteúdo relevante de movimento irrelevante (ex.: chuva, folhagem);
 - uma falha simultânea do detector, do fluxo e do tracker mantém a última posição por no máximo dez segundos.
 
 ## Custos operacionais
@@ -317,7 +312,7 @@ Varredura barata localiza segmentos ativos
         ↓
 Detecção densa com YuNet apenas onde há movimento
         ↓
-Atividade labial escolhe o locutor (histerese de 1,5 s a 1,5×)
+Atividade labial escolhe o locutor (histerese de 0,6 s a 1,2×)
         ↓
 Grupos próximos viram um único foco
         ↓
@@ -325,7 +320,7 @@ Composição: respiro de cabeça a 40%, margem de 15%, viés de olhar
         ↓
 Fluxo óptico cobre ausências curtas; CSRT/MIL cobre as longas
         ↓
-Saliência (movimento + gradientes) quando não há rostos
+Manter a última posição por 3 s sem rosto e recentralizar
         ↓
 Velocidade prevê o alvo (+0,3 s) e adapta média, zona morta e ganho
         ↓

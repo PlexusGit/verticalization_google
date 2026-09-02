@@ -14,36 +14,6 @@ import pytest
 import face_detection
 
 
-def test_content_saliency_peaks_on_the_bright_blob():
-    gray = np.zeros((180, 320), dtype=np.uint8)
-    gray[60:120, 200:280] = 255
-    saliency, contrast = face_detection.content_saliency(None, gray)
-    assert saliency is not None and contrast > 0
-    focus = face_detection.saliency_focus(saliency, 320, 180, 1920, 1080)
-    assert focus is not None
-    # Blob center is x=240/320 (75%) and y=90/180 (50%).
-    assert focus[0] == pytest.approx(0.75 * 1920, abs=1920 * 0.15)
-    assert focus[1] == pytest.approx(0.50 * 1080, abs=1080 * 0.20)
-
-
-def test_content_saliency_uses_motion_when_available():
-    previous = np.zeros((180, 320), dtype=np.uint8)
-    current = np.zeros((180, 320), dtype=np.uint8)
-    current[40:100, 40:120] = 255  # appeared -> motion exactly there
-    saliency, contrast = face_detection.content_saliency(previous, current)
-    assert saliency is not None and contrast >= face_detection.SALIENCY_PEAK_THRESHOLD
-    focus = face_detection.saliency_focus(saliency, 320, 180, 1920, 1080)
-    assert focus is not None
-    assert focus[0] == pytest.approx(0.25 * 1920, abs=1920 * 0.15)
-    assert focus[1] == pytest.approx(0.39 * 1080, abs=1080 * 0.20)
-
-
-def test_content_saliency_rejects_flat_frames():
-    gray = np.full((180, 320), 128, dtype=np.uint8)
-    saliency, contrast = face_detection.content_saliency(None, gray)
-    assert contrast < face_detection.SALIENCY_PEAK_THRESHOLD
-
-
 def test_flow_track_recovers_translation():
     previous = np.zeros((180, 320), dtype=np.uint8)
     previous[40:100, 40:120] = 255
@@ -108,8 +78,8 @@ def test_schedule_respects_frame_budget_on_fully_active_video():
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="FFmpeg indisponível")
-def test_harness_trajectory_follows_known_moving_subject(tmp_path):
-    """A white box sliding left-to-right must be followed by the focal path."""
+def test_harness_without_faces_recenters_after_hold(tmp_path):
+    """Sem rostos, o corte mantém a última posição pelo hold e depois volta ao centro."""
     source = tmp_path / "moving.mp4"
     filter_graph = (
         "color=c=black:size=640x360:rate=10:duration=6[bg];"
@@ -123,28 +93,10 @@ def test_harness_trajectory_follows_known_moving_subject(tmp_path):
         check=True, capture_output=True,
     )
     points = face_detection.analyze_focal_points(str(source), 0, 6, 640, 360)
-    assert len(points) >= 4
-
-    crop_width, _ = face_detection.crop_dimensions(640, 360)
-
-    def box_center_x(time_seconds: float) -> float:
-        return 120 + 60 * time_seconds + 60  # overlay x + half box width
-
-    inside = 0
-    total = 0
-    jitter_samples = []
-    previous_x = None
-    for point in points:
-        truth = box_center_x(point["time"])
-        total += 1
-        if abs(point["x"] - truth) <= crop_width / 2:
-            inside += 1
-        if previous_x is not None:
-            jitter_samples.append(abs(point["x"] - previous_x))
-        previous_x = point["x"]
-
-    in_crop_ratio = inside / total
-    max_step = max(jitter_samples) if jitter_samples else 0.0
-    # The subject must stay framed most of the time and the path must not teleport.
-    assert in_crop_ratio >= 0.8, f"subject in crop only {in_crop_ratio:.0%} of the time"
-    assert max_step <= crop_width * 0.5, f"jitter spike of {max_step:.0f}px between keyframes"
+    assert points
+    # 640 × 360 → o centro é (320, 180); sem rostos a trajetória converge para ele.
+    late = [point for point in points if point["time"] >= face_detection.FACE_HOLD_SECONDS]
+    assert late, "esperava amostras após a janela de retenção"
+    for point in late:
+        assert point["x"] == pytest.approx(320, abs=2.0), f"x={point['x']} em t={point['time']}"
+        assert point["y"] == pytest.approx(180, abs=2.0), f"y={point['y']} em t={point['time']}"
