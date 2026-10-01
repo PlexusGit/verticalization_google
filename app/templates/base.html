@@ -5,13 +5,13 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{% block title %}Plexus Vertical Cuts{% endblock %}</title>
   <link rel="icon" href="/logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/app.css?v=7">
+  <link rel="stylesheet" href="/static/app.css?v=11">
   {% block head %}{% endblock %}
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="/dashboard"><img src="/logo.svg" alt="Plexus"><span>Plexus Vertical Cuts</span></a>
-    {% if user %}<nav class="topnav"><a href="/dashboard">Vídeos</a><a href="/templates">Templates</a>{% if user.info.role == "admin" %}<a href="/users">Usuários</a>{% endif %}</nav><div class="user"><span>{{ user.info.name or user.info.email }}</span><a href="/logout">Sair</a></div>{% endif %}
+    {% if user %}<nav class="topnav"><a href="/dashboard">Vídeos</a><a href="/templates">Templates</a>{% if user.info.role == "admin" %}<a href="/prompts">Prompts</a><a href="/users">Usuários</a>{% endif %}</nav><div class="user"><span>{{ user.info.name or user.info.email }}</span><a href="/logout">Sair</a></div>{% endif %}
   </header>
   <main class="container">{% block content %}{% endblock %}</main>
   {% block scripts %}{% endblock %}

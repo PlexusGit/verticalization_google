@@ -163,3 +163,89 @@ def test_saving_bounds_skips_redispatch_when_pipeline_is_busy(monkeypatch):
     )
     assert response.status_code == 200
     assert dispatched == []
+
+
+def test_editor_options_persist_without_render(monkeypatch):
+    snapshot, dispatched = _patch(monkeypatch, _video_data(duration_seconds=700))
+    chapter_id = "chapter_abc"
+    snapshot.chapters.document(chapter_id).data = {"start_seconds": 0, "end_seconds": 612, "title": "Novo capítulo"}
+    response = client.put(
+        f"/api/video/v_test/chapters/{chapter_id}",
+        json={
+            "title": "Novo capítulo",
+            "start_seconds": 0,
+            "end_seconds": 612,
+            "subtitle_text": "",
+            "template_id": "none",
+            "render_options": {
+                "layout_mode": "split_stack",
+                "keyframes_top": [{"time": 5.0, "x": 100, "y": 50}],
+                "caption_style": {"font_size": 72, "position": "top"},
+            },
+        },
+    )
+    assert response.status_code == 200
+    assert dispatched == []
+    stored = snapshot.chapters.document(chapter_id).data["render_options"]
+    assert stored["layout_mode"] == "split_stack"
+    assert stored["keyframes_top"] == [{"time": 5.0, "x": 100.0, "y": 50.0}]
+    assert stored["caption_style"]["font_size"] == 72
+    assert stored["caption_style"]["position"] == "top"
+    # The raw template choice lives at chapter level, not inside render_options.
+    assert stored["template_id"] is None
+    assert snapshot.chapters.document(chapter_id).data["template_id"] == "none"
+
+
+def test_editor_options_preserve_stored_branding_and_plan(monkeypatch):
+    snapshot, _ = _patch(monkeypatch, _video_data(duration_seconds=700))
+    chapter_id = "chapter_abc"
+    snapshot.chapters.document(chapter_id).data = {
+        "start_seconds": 0,
+        "end_seconds": 612,
+        "title": "Novo capítulo",
+        "render_options": {
+            "branding": {"text": {"text": "approved"}},
+            "camera_plan_gcs_path": "v_test/plan.json.gz",
+            "camera_plan_fingerprint": "abc",
+            "focal_strategy_version": 10,
+        },
+    }
+    response = client.put(
+        f"/api/video/v_test/chapters/{chapter_id}",
+        json={
+            "title": "Novo capítulo",
+            "start_seconds": 0,
+            "end_seconds": 612,
+            "subtitle_text": "",
+            "render_options": {"layout_mode": "center_crop"},
+        },
+    )
+    assert response.status_code == 200
+    stored = snapshot.chapters.document(chapter_id).data["render_options"]
+    assert stored["branding"]["text"]["text"] == "approved"
+    assert stored["camera_plan_gcs_path"] == "v_test/plan.json.gz"
+    assert stored["camera_plan_fingerprint"] == "abc"
+    assert stored["focal_strategy_version"] == 10
+
+
+def test_bounds_change_rerender_keeps_stored_options(monkeypatch):
+    snapshot, dispatched = _patch(monkeypatch, _video_data(duration_seconds=700))
+    chapter_id = "chapter_abc"
+    snapshot.chapters.document(chapter_id).data = {
+        "start_seconds": 0,
+        "end_seconds": 60,
+        "title": "Novo capítulo",
+        "render_options": {
+            "layout_mode": "split_stack",
+            "keyframes_top": [{"time": 5.0, "x": 100.0, "y": 50.0}],
+        },
+    }
+    response = client.put(
+        f"/api/video/v_test/chapters/{chapter_id}",
+        json={"title": "Novo capítulo", "start_seconds": 0, "end_seconds": 612, "subtitle_text": ""},
+    )
+    assert response.status_code == 200
+    assert len(dispatched) == 1
+    options = dispatched[0][2]
+    assert options.layout_mode == "split_stack"
+    assert options.keyframes_top[0].x == 100.0

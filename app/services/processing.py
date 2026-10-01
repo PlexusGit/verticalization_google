@@ -4,6 +4,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import shutil
+import subprocess
+import tempfile
 import time
 import uuid
 
@@ -299,6 +302,59 @@ def process_video(video_id: str) -> None:
         _set_error(ref, exc)
 
 
+def _render_horizontal_cut(video: dict, chapter: dict, video_id: str, chapter_id: str, render_id: str) -> str:
+    """Trim the normalized source to the chapter bounds into a plain 16:9 cut.
+
+    Runs after a successful final vertical render; re-encoding keeps the trim
+    frame-accurate (``-c copy`` would snap to GOP boundaries).
+    """
+
+    ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+    source_path = video.get("gcs_high_path") or video.get("gcs_source_path")
+    if not source_path:
+        raise RuntimeError("fonte do vídeo indisponível para o corte horizontal")
+    start = float(chapter["start_seconds"])
+    end = float(chapter["end_seconds"])
+    with tempfile.TemporaryDirectory(prefix="horizontal-cut-") as workdir:
+        source_local = os.path.join(workdir, "source.mp4")
+        output_local = os.path.join(workdir, "horizontal.mp4")
+        storage.download_to_file(source_path, source_local)
+        subprocess.run(
+            [
+                ffmpeg,
+                "-hide_banner",
+                "-y",
+                "-ss",
+                f"{start:.3f}",
+                "-to",
+                f"{end:.3f}",
+                "-i",
+                source_local,
+                "-vf",
+                "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "20",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "160k",
+                "-movflags",
+                "+faststart",
+                output_local,
+            ],
+            check=True,
+            capture_output=True,
+            timeout=1800,
+        )
+        target = f"{video_id}/chapters/{chapter_id}/horizontal_{render_id}.mp4"
+        storage.upload_file(output_local, target, "video/mp4")
+    return target
+
+
 def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, final: bool) -> dict:
     """Persist and dispatch one draft/final render in a retry-safe path."""
 
@@ -410,14 +466,11 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
         "mode": persisted_options.get("layout_mode", "center_crop"),
         "keyframes_top": persisted_options.get("keyframes_top") or [],
         "keyframes_bottom": persisted_options.get("keyframes_bottom") or [],
-        "automatic_focal_points": (
-            persisted_options.get("automatic_focal_points") or []
-        )
-        if stored_version == settings.LEGACY_FOCAL_STRATEGY_VERSION
-        else [],
         "camera_plan_gcs_path": (persisted_options.get("camera_plan_gcs_path") or "") if reusable_plan else "",
         "camera_plan_fingerprint": (persisted_options.get("camera_plan_fingerprint") or "") if reusable_plan else "",
-        "captions": captions,
+        # Previews stay caption-free: the editor simulates caption timing and
+        # style in the DOM overlay; only approved finals burn the subtitles in.
+        "captions": captions if final else [],
         "caption_style": {
             "font": caption_style.get("font", settings.DEFAULT_CAPTION_FONT),
             "size": caption_style.get("font_size", settings.DEFAULT_CAPTION_FONT_SIZE),
@@ -495,15 +548,45 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
         # render may update the chapter's visible draft/final fields.
         fresh = chapter_ref.get().to_dict() or {}
         if fresh.get(f"{kind}_render_id") == render_id:
+            # A draft preview carries no branding; keep approval-applied
+            # branding already stored so a later retry still renders it.
+            chapter_options = dict(persisted_options)
+            stored_branding = ((fresh.get("render_options") or {}).get("branding") or {})
+            current_branding = chapter_options.get("branding") or {}
+            if not (current_branding.get("logo") or current_branding.get("text")) and (stored_branding.get("logo") or stored_branding.get("text")):
+                chapter_options["branding"] = stored_branding
             chapter_ref.update(
                 {
                     f"{kind}_status": "COMPLETED",
                     f"{kind}_gcs_path": output_path,
                     f"{kind}_render_id": render_id,
-                    "render_options": persisted_options,
+                    "render_options": chapter_options,
                     "updated_at": firestore.SERVER_TIMESTAMP,
                 }
             )
+            if final:
+                # The plain 16:9 trim of the same bounds; a failure must not
+                # fail the vertical final that already completed.
+                chapter_ref.update({"horizontal_status": "PROCESSING", "updated_at": firestore.SERVER_TIMESTAMP})
+                try:
+                    horizontal_path = _render_horizontal_cut(video, chapter, video_id, chapter_id, render_id)
+                    chapter_ref.update(
+                        {
+                            "horizontal_status": "COMPLETED",
+                            "horizontal_gcs_path": horizontal_path,
+                            "updated_at": firestore.SERVER_TIMESTAMP,
+                        }
+                    )
+                    events.record(
+                        video_id,
+                        stage="render",
+                        action="horizontal_cut_completed",
+                        message=f"Corte horizontal 16:9 concluído para {chapter_id}",
+                        details={"chapter_id": chapter_id, "gcs_path": horizontal_path},
+                    )
+                except Exception as exc:
+                    logger.error("Corte horizontal falhou video=%s chapter=%s: %s", video_id, chapter_id, exc, exc_info=True)
+                    chapter_ref.update({"horizontal_status": "ERROR", "horizontal_error": str(exc)[:500], "updated_at": firestore.SERVER_TIMESTAMP})
         else:
             logger.info(
                 "Render %s %s concluído porém superado por %s; capítulo %s mantém o render mais recente",

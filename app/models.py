@@ -69,25 +69,6 @@ class RenderStatus(StrEnum):
     ERROR = "ERROR"
 
 
-class ChapterInput(BaseModel):
-    """Editable chapter boundaries and copy submitted by the review UI."""
-
-    id: str | None = None
-    title: str = Field(min_length=1, max_length=180)
-    reason: str = Field(default="", max_length=600)
-    start_seconds: float = Field(ge=0)
-    end_seconds: float = Field(gt=0)
-    subtitle_text: str = Field(default="", max_length=100_000)
-    template_id: str | None = Field(default=None, max_length=200)
-    selected: bool = True
-
-    @model_validator(mode="after")
-    def validate_range(self) -> "ChapterInput":
-        if self.end_seconds <= self.start_seconds:
-            raise ValueError("end_seconds must be greater than start_seconds")
-        return self
-
-
 class CropKeyframe(BaseModel):
     time: float = Field(ge=0)
     x: float = Field(ge=0)
@@ -165,6 +146,32 @@ class RenderRequest(BaseModel):
     focal_strategy_version: int = 0
     camera_plan_gcs_path: str = Field(default="", max_length=1024)
     camera_plan_fingerprint: str = Field(default="", max_length=128)
+
+
+class ChapterInput(BaseModel):
+    """Editable chapter boundaries and copy submitted by the review UI."""
+
+    id: str | None = None
+    title: str = Field(min_length=1, max_length=180)
+    reason: str = Field(default="", max_length=600)
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+    subtitle_text: str = Field(default="", max_length=100_000)
+    template_id: str | None = Field(default=None, max_length=200)
+    selected: bool = True
+    # Editor-owned render options (framing mode, anchors, captions). Branding
+    # and worker-produced artifacts are preserved from the stored options.
+    render_options: RenderRequest | None = None
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "ChapterInput":
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
+        return self
+
+
+class PromptUpdate(BaseModel):
+    text: str = Field(min_length=1, max_length=20_000)
 
 
 class ImportGCSRequest(BaseModel):

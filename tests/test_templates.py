@@ -346,11 +346,9 @@ def test_render_resolves_explicit_template_into_branding(monkeypatch):
 
     assert response.status_code == 202
     options = dispatched[0][0][2]
-    # The render dispatch carries the resolved template branding.
-    assert options.branding.text.text == "Jornal: Capítulo"
-    assert options.branding.text.width_percent == 80
-    assert options.branding.logo.x_percent == 50
-    assert options.branding.logo.height_percent == 15
+    # Draft previews render unbranded; the template is applied once at approval.
+    assert options.branding.logo is None
+    assert options.branding.text is None
     # The chapter keeps the raw explicit choice and the snapshot.
     assert chapter.written["template_id"] == "tpl_1"
     assert chapter.written["template_title"] == "Plantão"
@@ -367,9 +365,10 @@ def test_render_auto_choice_uses_default_template(monkeypatch):
     response = client.post("/api/video/v_test/chapters/chapter_001/render", json={"template_id": ""})
 
     assert response.status_code == 202
-    assert dispatched[0][0][2].branding.text.text == "Capítulo"
+    assert dispatched[0][0][2].branding.text is None
     # Empty choice stays auto so the chapter follows the default template.
     assert chapter.written["template_id"] is None
+    assert chapter.written["template_snapshot"]["id"] == "tpl_d"
 
 
 def test_render_none_choice_clears_branding(monkeypatch):
@@ -385,6 +384,43 @@ def test_render_none_choice_clears_branding(monkeypatch):
     assert options.branding.text is None
     assert chapter.written["template_id"] == "none"
     assert chapter.written["template_snapshot"] is None
+
+
+def test_render_final_resolves_template_into_branding(monkeypatch):
+    chapter = _RenderChapter()
+    template = TemplateDoc(
+        "tpl_1",
+        {
+            "id": "tpl_1",
+            "title": "Plantão",
+            "title_macro": "{chapter_title}",
+            "logo": {"gcs_path": "templates/tpl_1/logo.png", "x_percent": 50, "y_percent": 40, "width_percent": 30, "height_percent": 15},
+        },
+    )
+    dispatched = _render_mocks(monkeypatch, chapter, [template])
+
+    response = client.post("/api/video/v_test/chapters/chapter_001/render", json={"template_id": "tpl_1", "final": True})
+
+    assert response.status_code == 202
+    options = dispatched[0][0][2]
+    assert options.branding.text.text == "Capítulo"
+    assert options.branding.logo.x_percent == 50
+
+
+def test_draft_render_preserves_stored_branding(monkeypatch):
+    stored = {"branding": {"text": {"text": "approved title"}}, "camera_plan_gcs_path": "plan.json.gz"}
+    chapter = _RenderChapter({"render_options": stored})
+    dispatched = _render_mocks(monkeypatch, chapter, [])
+
+    response = client.post("/api/video/v_test/chapters/chapter_001/render", json={})
+
+    assert response.status_code == 202
+    # The dispatched preview stays unbranded…
+    assert dispatched[0][0][2].branding.text is None
+    # …but the chapter's stored options keep the approval-owned artifacts.
+    persisted = chapter.written["render_options"]
+    assert persisted["branding"]["text"]["text"] == "approved title"
+    assert persisted["camera_plan_gcs_path"] == "plan.json.gz"
 
 
 def test_render_rejects_missing_template(monkeypatch):

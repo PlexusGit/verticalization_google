@@ -162,3 +162,105 @@ def test_v10_render_drops_stale_v3_focal_points(monkeypatch, chapter_ref):
     assert options["camera_plan_gcs_path"].endswith("abc.plan.json.gz")
     assert options["camera_plan_fingerprint"] == "abc123"
     assert "automatic_focal_points" not in options
+
+
+def _mock_horizontal_cut(monkeypatch, chapter_ref, *, fail=False):
+    """Provide a source path and intercept download/ffmpeg/upload."""
+    monkeypatch.setattr(
+        processing,
+        "_video_ref",
+        lambda _id: FakeVideoRef(
+            {"video_resolution": {"w": 1920, "h": 1080}, "gcs_high_path": "v_test/high.mp4"},
+            chapter_ref,
+        ),
+    )
+    calls = {}
+
+    def fake_download(src, dst):
+        calls["download"] = (src, dst)
+        return dst
+
+    def fake_run(cmd, **kwargs):
+        calls["ffmpeg"] = cmd
+        if fail:
+            raise RuntimeError("ffmpeg exploded")
+
+    def fake_upload(local, path, content_type):
+        calls["upload"] = path
+        return path
+
+    monkeypatch.setattr(processing.storage, "download_to_file", fake_download)
+    monkeypatch.setattr(processing.subprocess, "run", fake_run)
+    monkeypatch.setattr(processing.storage, "upload_file", fake_upload)
+    return calls
+
+
+def test_final_render_generates_horizontal_cut(monkeypatch, chapter_ref):
+    chapter_ref.data.update({"start_seconds": 27.08, "end_seconds": 118.28})
+    calls = _mock_horizontal_cut(monkeypatch, chapter_ref)
+    monkeypatch.setattr(processing, "uuid", FakeUuidModule(["eeeeeeeeeeee"]))
+    monkeypatch.setattr(processing.vertical_render, "submit", lambda _payload: {"gcs_path": "final.mp4"})
+
+    render_chapter("v_test", "chapter_001", RenderRequest(), final=True)
+
+    assert chapter_ref.data["final_status"] == "COMPLETED"
+    assert chapter_ref.data["horizontal_status"] == "COMPLETED"
+    assert chapter_ref.data["horizontal_gcs_path"] == "v_test/chapters/chapter_001/horizontal_final_eeeeeeeeee.mp4"
+    assert calls["download"] == ("v_test/high.mp4", calls["download"][1])
+    cmd = calls["ffmpeg"]
+    assert cmd[cmd.index("-ss") + 1] == "27.080"
+    assert cmd[cmd.index("-to") + 1] == "118.280"
+    assert "1920:1080" in cmd[cmd.index("-vf") + 1]
+    assert calls["upload"] == chapter_ref.data["horizontal_gcs_path"]
+
+
+def test_horizontal_cut_failure_keeps_final_completed(monkeypatch, chapter_ref):
+    _mock_horizontal_cut(monkeypatch, chapter_ref, fail=True)
+    monkeypatch.setattr(processing, "uuid", FakeUuidModule(["ffffffffffff"]))
+    monkeypatch.setattr(processing.vertical_render, "submit", lambda _payload: {"gcs_path": "final.mp4"})
+
+    render_chapter("v_test", "chapter_001", RenderRequest(), final=True)
+
+    assert chapter_ref.data["final_status"] == "COMPLETED"
+    assert chapter_ref.data["final_gcs_path"] == "final.mp4"
+    assert chapter_ref.data["horizontal_status"] == "ERROR"
+    assert "horizontal_gcs_path" not in chapter_ref.data
+
+
+def test_draft_payload_has_no_captions(monkeypatch, chapter_ref):
+    # Previews simulate captions in the editor overlay; only finals burn them.
+    chapter_ref.data["subtitle_text"] = "1\n00:00:01,000 --> 00:00:03,000\nOlá mundo\n"
+    payloads = []
+    monkeypatch.setattr(processing, "uuid", FakeUuidModule(["a1b2c3d4e5f6"]))
+    monkeypatch.setattr(processing.vertical_render, "submit", lambda payload: payloads.append(payload) or {"gcs_path": "draft.mp4"})
+
+    render_chapter("v_test", "chapter_001", RenderRequest(), final=False)
+
+    assert payloads[0]["captions"] == []
+
+
+def test_final_payload_burns_captions(monkeypatch, chapter_ref):
+    chapter_ref.data["subtitle_text"] = "1\n00:00:01,000 --> 00:00:03,000\nOlá mundo\n"
+    chapter_ref.data.update({"start_seconds": 27.08, "end_seconds": 118.28})
+    _mock_horizontal_cut(monkeypatch, chapter_ref)
+    monkeypatch.setattr(processing.srt, "parse_srt", lambda _text: [type("Cue", (), {"start": 1.0, "end": 3.0, "text": "Olá mundo"})()])
+    payloads = []
+    monkeypatch.setattr(processing, "uuid", FakeUuidModule(["b2c3d4e5f6a1"]))
+    monkeypatch.setattr(processing.vertical_render, "submit", lambda payload: payloads.append(payload) or {"gcs_path": "final.mp4"})
+
+    render_chapter("v_test", "chapter_001", RenderRequest(), final=True)
+
+    captions = payloads[0]["captions"]
+    assert captions == [{"start": 28.08, "end": 30.08, "text": "Olá mundo"}]
+
+
+def test_draft_render_skips_horizontal_cut(monkeypatch, chapter_ref):
+    calls = _mock_horizontal_cut(monkeypatch, chapter_ref)
+    monkeypatch.setattr(processing, "uuid", FakeUuidModule(["999999999999"]))
+    monkeypatch.setattr(processing.vertical_render, "submit", lambda _payload: {"gcs_path": "draft.mp4"})
+
+    render_chapter("v_test", "chapter_001", RenderRequest(), final=False)
+
+    assert chapter_ref.data["draft_status"] == "COMPLETED"
+    assert "horizontal_status" not in chapter_ref.data
+    assert "ffmpeg" not in calls

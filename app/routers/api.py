@@ -16,8 +16,8 @@ from pydantic import ValidationError
 from app.auth import get_current_user, request_is_admin, request_is_authenticated
 from app.config import settings
 from app.db import get_db
-from app.models import AllowedUserInput, ApprovalRequest, BrandingOptions, ChapterInput, ImportGCSRequest, RenderRequest, VideoStatus, VideoTemplateInput
-from app.services import gemini, srt, storage
+from app.models import AllowedUserInput, ApprovalRequest, BrandingOptions, ChapterInput, ImportGCSRequest, PromptUpdate, RenderRequest, VideoStatus, VideoTemplateInput
+from app.services import gemini, prompts, srt, storage
 from app.services.processing import (
     create_video_record,
     process_video,
@@ -601,7 +601,7 @@ async def video_detail(request: Request, video_id: str):
     chapters = []
     for document in snapshot.reference.collection("chapters").stream():
         chapter = document.to_dict() or {}
-        for kind in ("draft", "final"):
+        for kind in ("draft", "final", "horizontal"):
             path = chapter.get(f"{kind}_gcs_path")
             if path:
                 try:
@@ -670,13 +670,25 @@ async def update_chapter(request: Request, video_id: str, chapter_id: str, backg
         or float(previous.get("end_seconds") or 0) != chapter.end_seconds
     )
     data = chapter.model_dump(mode="json", exclude={"id"})
+    incoming_options = data.pop("render_options", None)
+    if incoming_options is not None:
+        stored_options = dict(previous.get("render_options") or {})
+        # The editor owns framing/caption fields only; approval-owned branding
+        # and worker-produced artifacts carry over from the stored options.
+        for key in ("branding", "camera_plan_gcs_path", "camera_plan_fingerprint", "focal_strategy_version", "automatic_focal_points"):
+            if stored_options.get(key):
+                incoming_options[key] = stored_options[key]
+        incoming_options["template_id"] = None
+        incoming_options["final"] = False
+        data["render_options"] = incoming_options
     if not data["subtitle_text"]:
         data["subtitle_text"] = srt.slice_srt(video_data.get("subtitle_text", ""), chapter.start_seconds, chapter.end_seconds)
     data["updated_at"] = firestore.SERVER_TIMESTAMP
     chapter_ref.set(data, merge=True)
     # The draft must match the declared bounds; re-render when they change.
     if bounds_changed and _can_render_draft(video_data):
-        background_tasks.add_task(render_chapter, video_id, chapter_id, RenderRequest(), final=False)
+        stored = data.get("render_options") or previous.get("render_options") or {}
+        background_tasks.add_task(render_chapter, video_id, chapter_id, RenderRequest.model_validate(stored), final=False)
         logging.getLogger("plexus.api").info(
             "Limites do capítulo %s alterados (%s–%s → %s–%s); rascunho reagendado video=%s",
             chapter_id,
@@ -716,7 +728,7 @@ async def add_chapter(request: Request, video_id: str, background_tasks: Backgro
         return JSONResponse({"error": exc.errors()}, status_code=422)
     video_data = video.to_dict() or {}
     chapter_id = f"chapter_{video.reference.collection('chapters').document().id[:12]}"
-    data = chapter.model_dump(mode="json", exclude={"id"})
+    data = chapter.model_dump(mode="json", exclude={"id", "render_options"})
     if not data["subtitle_text"]:
         data["subtitle_text"] = srt.slice_srt(video_data.get("subtitle_text", ""), chapter.start_seconds, chapter.end_seconds)
     data.update({"id": chapter_id, "created_at": firestore.SERVER_TIMESTAMP, "updated_at": firestore.SERVER_TIMESTAMP})
@@ -824,15 +836,27 @@ async def queue_render(request: Request, video_id: str, chapter_id: str, backgro
         if not template_snapshot.exists:
             return JSONResponse({"error": "O template selecionado não existe"}, status_code=400)
         template = template_snapshot.to_dict() or {}
+    # Preview renders never bake the template: the editor already previews its
+    # geometry in the DOM overlay and approval applies branding once, to the
+    # final render. A final request through this endpoint still resolves it.
+    if options.final and template:
         options.branding = BrandingOptions.model_validate(_template_branding(template, video_data, chapter))
     else:
         options.branding = BrandingOptions()
+    options.template_id = None
+    persisted_options = options.model_dump(mode="json")
+    stored_options = chapter.get("render_options") or {}
+    if not options.final:
+        # Approval-owned branding and worker-produced artifacts keep whatever
+        # the stored options already carry.
+        for key in ("branding", "camera_plan_gcs_path", "camera_plan_fingerprint", "focal_strategy_version", "automatic_focal_points"):
+            if stored_options.get(key):
+                persisted_options[key] = stored_options[key]
     # Persist the raw choice (None = auto) so the card dropdown and approval
     # stay in sync, and the chapter still follows the default template.
-    options.template_id = None
     chapter_snapshot.reference.set(
         {
-            "render_options": options.model_dump(mode="json"),
+            "render_options": persisted_options,
             "template_id": raw_choice,
             "template_title": (template or {}).get("title"),
             "template_snapshot": template,
@@ -939,13 +963,45 @@ async def approve(request: Request, video_id: str, background_tasks: BackgroundT
 async def download_render(request: Request, video_id: str, chapter_id: str, kind: str):
     if response := _unauthorized(request):
         return response
-    if kind not in {"draft", "final"}:
+    if kind not in {"draft", "final", "horizontal"}:
         return JSONResponse({"error": "Tipo inválido"}, status_code=400)
     chapter = _video_snapshot(video_id).reference.collection("chapters").document(chapter_id).get()
     path = (chapter.to_dict() or {}).get(f"{kind}_gcs_path") if chapter.exists else None
     if not path:
         return JSONResponse({"error": "Render indisponível"}, status_code=404)
     return RedirectResponse(storage.signed_url(path, 60))
+
+
+@router.get("/prompts")
+async def list_prompts(request: Request):
+    if response := _admin_forbidden(request):
+        return response
+    return {"prompts": prompts.list_prompts()}
+
+
+@router.put("/prompts/{key}")
+async def update_prompt(request: Request, key: str):
+    if response := _admin_forbidden(request):
+        return response
+    if key not in prompts.PROMPT_DEFINITIONS:
+        return JSONResponse({"error": "Prompt desconhecido"}, status_code=404)
+    try:
+        payload = PromptUpdate.model_validate(await request.json())
+    except ValidationError as exc:
+        return JSONResponse({"error": exc.errors()}, status_code=422)
+    user = get_current_user(request) or {}
+    prompts.save_prompt(key, payload.text.strip(), (user.get("info") or {}).get("email"))
+    return {"ok": True}
+
+
+@router.delete("/prompts/{key}")
+async def revert_prompt(request: Request, key: str):
+    if response := _admin_forbidden(request):
+        return response
+    if key not in prompts.PROMPT_DEFINITIONS:
+        return JSONResponse({"error": "Prompt desconhecido"}, status_code=404)
+    prompts.revert_prompt(key)
+    return {"ok": True}
 
 
 @router.post("/video/{video_id}/retry")
