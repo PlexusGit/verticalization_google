@@ -816,7 +816,8 @@ async def queue_render(request: Request, video_id: str, chapter_id: str, backgro
 
     # Resolve the chapter's template the same way approval does: explicit id
     # wins, "none" is a sticky opt-out, empty/missing inherits the default.
-    resolved_id = _resolve_template_choice(options.template_id, _default_template_id())
+    raw_choice = options.template_id or None
+    resolved_id = _resolve_template_choice(raw_choice, _default_template_id())
     template = None
     if resolved_id:
         template_snapshot = get_db().collection(settings.COLLECTION_TEMPLATES).document(resolved_id).get()
@@ -832,7 +833,7 @@ async def queue_render(request: Request, video_id: str, chapter_id: str, backgro
     chapter_snapshot.reference.set(
         {
             "render_options": options.model_dump(mode="json"),
-            "template_id": resolved_id and None if options.template_id == "none" else (options.template_id if options.template_id else None),
+            "template_id": raw_choice,
             "template_title": (template or {}).get("title"),
             "template_snapshot": template,
             "updated_at": firestore.SERVER_TIMESTAMP,

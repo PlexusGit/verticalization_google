@@ -279,3 +279,119 @@ def test_create_template_without_default_flag_is_not_default(monkeypatch):
 
     assert response.status_code == 201
     assert collection.new_reference.written["is_default"] is False
+
+
+class _RenderChapter:
+    def __init__(self, data=None):
+        self.id = "chapter_001"
+        self.reference = self
+        self.exists = True
+        self.written = None
+        self._data = {"id": "chapter_001", "title": "Capítulo", **(data or {})}
+
+    def to_dict(self):
+        return self._data
+
+    def get(self):
+        return self
+
+    def set(self, data, merge=False):
+        if merge:
+            self._data.update(data)
+        self.written = data
+
+
+def _render_mocks(monkeypatch, chapter, template_docs):
+    """Wire the render endpoint to fakes; returns the dispatched options list."""
+    dispatched = []
+
+    class Chapters:
+        def document(self, _id):
+            return chapter
+
+    class VideoRef:
+        def collection(self, _name):
+            return Chapters()
+
+    class Video:
+        exists = True
+        reference = VideoRef()
+
+        def to_dict(self):
+            return {"title": "Jornal", "status": "PENDING_REVIEW"}
+
+    monkeypatch.setattr(api, "request_is_authenticated", lambda _request: True)
+    monkeypatch.setattr(api, "_video_snapshot", lambda _video_id: Video())
+    monkeypatch.setattr(api, "get_db", lambda: TemplateDB(TemplateCollection(template_docs)))
+    monkeypatch.setattr(api, "render_chapter", lambda *args, **kwargs: dispatched.append((args, kwargs)))
+    return dispatched
+
+
+def test_render_resolves_explicit_template_into_branding(monkeypatch):
+    chapter = _RenderChapter()
+    template = TemplateDoc(
+        "tpl_1",
+        {
+            "id": "tpl_1",
+            "title": "Plantão",
+            "title_macro": "{video_title}: {chapter_title}",
+            "title_position": "top-center",
+            "title_geometry": {"x_percent": 10, "y_percent": 18, "width_percent": 80, "height_percent": 12, "font_size": 60},
+            "logo": {"gcs_path": "templates/tpl_1/logo.png", "x_percent": 50, "y_percent": 40, "width_percent": 30, "height_percent": 15},
+        },
+    )
+    dispatched = _render_mocks(monkeypatch, chapter, [template])
+
+    response = client.post("/api/video/v_test/chapters/chapter_001/render", json={"template_id": "tpl_1"})
+
+    assert response.status_code == 202
+    options = dispatched[0][0][2]
+    # The render dispatch carries the resolved template branding.
+    assert options.branding.text.text == "Jornal: Capítulo"
+    assert options.branding.text.width_percent == 80
+    assert options.branding.logo.x_percent == 50
+    assert options.branding.logo.height_percent == 15
+    # The chapter keeps the raw explicit choice and the snapshot.
+    assert chapter.written["template_id"] == "tpl_1"
+    assert chapter.written["template_title"] == "Plantão"
+    assert chapter.written["template_snapshot"]["id"] == "tpl_1"
+    # The stored render_options do not carry template_id.
+    assert chapter.written["render_options"]["template_id"] is None
+
+
+def test_render_auto_choice_uses_default_template(monkeypatch):
+    chapter = _RenderChapter()
+    default = TemplateDoc("tpl_d", {"id": "tpl_d", "title": "Padrão", "title_macro": "{chapter_title}", "is_default": True, "logo": None})
+    dispatched = _render_mocks(monkeypatch, chapter, [default])
+
+    response = client.post("/api/video/v_test/chapters/chapter_001/render", json={"template_id": ""})
+
+    assert response.status_code == 202
+    assert dispatched[0][0][2].branding.text.text == "Capítulo"
+    # Empty choice stays auto so the chapter follows the default template.
+    assert chapter.written["template_id"] is None
+
+
+def test_render_none_choice_clears_branding(monkeypatch):
+    chapter = _RenderChapter({"render_options": {"branding": {"text": {"text": "old"}}}})
+    default = TemplateDoc("tpl_d", {"id": "tpl_d", "title": "Padrão", "is_default": True, "logo": None})
+    dispatched = _render_mocks(monkeypatch, chapter, [default])
+
+    response = client.post("/api/video/v_test/chapters/chapter_001/render", json={"template_id": "none"})
+
+    assert response.status_code == 202
+    options = dispatched[0][0][2]
+    assert options.branding.logo is None
+    assert options.branding.text is None
+    assert chapter.written["template_id"] == "none"
+    assert chapter.written["template_snapshot"] is None
+
+
+def test_render_rejects_missing_template(monkeypatch):
+    chapter = _RenderChapter()
+    dispatched = _render_mocks(monkeypatch, chapter, [])
+
+    response = client.post("/api/video/v_test/chapters/chapter_001/render", json={"template_id": "ghost"})
+
+    assert response.status_code == 400
+    assert dispatched == []

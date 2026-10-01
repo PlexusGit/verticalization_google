@@ -55,8 +55,13 @@ def test_authenticated_templates_render_in_pt_br(monkeypatch):
     assert "Editor vertical" in detail.text
     assert "Foco automático em rostos" in detail.text
     assert 'id="editor-modal"' in detail.text
+    assert 'id="manual-modal"' in detail.text
+    assert 'id="editor-template"' in detail.text
     assert 'data-tab="editor"' not in detail.text
     assert 'id="tab-editor"' not in detail.text
+    assert 'id="logo-position"' not in detail.text
+    assert 'id="brand-position"' not in detail.text
+    assert 'id="logo-file"' not in detail.text
     assert 'src="/logo.svg"' in detail.text
     assert 'id="approve" disabled' in detail.text
     assert 'class="chapters-review-layout"' in detail.text
