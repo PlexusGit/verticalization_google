@@ -157,6 +157,7 @@ class RenderRequest(BaseModel):
     automatic_focal_points: list[CropKeyframe] = Field(default_factory=list, max_length=241)
     caption_style: CaptionStyle = Field(default_factory=CaptionStyle)
     branding: BrandingOptions = Field(default_factory=BrandingOptions)
+    template_id: str | None = Field(default=None, max_length=200)
     final: bool = False
     # Strategy of the stored framing artifacts: 3 = legacy focal keyframes,
     # 10 = v10 camera plan. Written back from every worker response so final

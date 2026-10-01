@@ -4,7 +4,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import textwrap
 import time
 import uuid
 
@@ -371,20 +370,15 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
         position = {"top": "top_center", "middle": "center", "bottom": "bottom_center"}.get(
             raw_position, raw_position.replace("-", "_")
         )
+        # The worker measures and wraps the title with the actual font file at
+        # render time (PIL + drawtext fontfile), so the raw text and declared
+        # font size are sent unchanged together with the template box.
         font_size = int(text.get("font_size", 54))
         width_percent = text.get("width_percent")
         height_percent = text.get("height_percent")
         max_width = round(settings.OUTPUT_WIDTH * float(width_percent) / 100) if width_percent is not None else None
         max_height = round(settings.OUTPUT_HEIGHT * float(height_percent) / 100) if height_percent is not None else None
         rendered_text = text["text"]
-        if max_width:
-            while True:
-                characters_per_line = max(8, int(max_width / max(1, font_size * 0.62)))
-                lines = textwrap.wrap(rendered_text, width=characters_per_line, break_long_words=False) or [rendered_text]
-                if not max_height or len(lines) * font_size * 1.2 <= max_height or font_size <= 16:
-                    rendered_text = "\n".join(lines)
-                    break
-                font_size -= 2
         text_overlays.append(
             {
                 "text": rendered_text,

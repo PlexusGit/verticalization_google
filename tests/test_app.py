@@ -54,6 +54,9 @@ def test_authenticated_templates_render_in_pt_br(monkeypatch):
     assert detail.status_code == 200
     assert "Editor vertical" in detail.text
     assert "Foco automático em rostos" in detail.text
+    assert 'id="editor-modal"' in detail.text
+    assert 'data-tab="editor"' not in detail.text
+    assert 'id="tab-editor"' not in detail.text
     assert 'src="/logo.svg"' in detail.text
     assert 'id="approve" disabled' in detail.text
     assert 'class="chapters-review-layout"' in detail.text
@@ -62,6 +65,9 @@ def test_authenticated_templates_render_in_pt_br(monkeypatch):
     assert "Adicionar usuário" in users.text
     assert templates.status_code == 200
     assert "Criar template" in templates.text
+    logo_markup = re.search(r'id="canvas-logo"(.*?)id="canvas-title"', templates.text, re.DOTALL)
+    assert logo_markup is not None
+    assert logo_markup.group(1).count('class="resize-handle') == 1
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="Node.js is unavailable")

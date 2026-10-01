@@ -8,12 +8,19 @@ rendering backend without changing the HTTP/GCS orchestration layer.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import math
 import os
 import re
 import subprocess
+import textwrap
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+try:  # Pillow rides in via requirements.txt; degrade to the heuristic wrap if absent.
+    from PIL import ImageFont
+except ImportError:  # pragma: no cover - exercised only on minimal installs
+    ImageFont = None
 
 OUTPUT_WIDTH = 1080
 OUTPUT_HEIGHT = 1920
@@ -264,6 +271,102 @@ def _escape_filter_text(text: str) -> str:
     return text.replace("\\", r"\\").replace("'", r"\'").replace(":", r"\:").replace("%", r"\%").replace("\n", r"\n")
 
 
+def _escape_filter_path(path: str) -> str:
+    return path.replace("\\", r"\\").replace("'", r"\'").replace(":", r"\:")
+
+
+_TITLE_FONT_CANDIDATES = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",   # Debian/Ubuntu (worker image)
+    "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",  # Fedora-family
+    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    "/Library/Fonts/Arial.ttf",                           # macOS
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _title_font_path() -> str | None:
+    """Resolve a concrete TTF so text measurement and drawtext use the same face."""
+
+    for candidate in _TITLE_FONT_CANDIDATES:
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _wrap_paragraph(font, paragraph: str, box_w: int) -> list[str]:
+    """Greedy word wrap measured with the actual font file."""
+
+    lines: list[str] = []
+    current = ""
+    for word in paragraph.split():
+        trial = f"{current} {word}" if current else word
+        if font.getlength(trial) <= box_w or not current:
+            current = trial
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
+
+def _hard_split(font, line: str, box_w: int) -> list[str]:
+    """Character-level split for a single word wider than the box."""
+
+    parts: list[str] = []
+    current = ""
+    for char in line:
+        if font.getlength(current + char) <= box_w or not current:
+            current += char
+        else:
+            parts.append(current)
+            current = char
+    parts.append(current)
+    return parts
+
+
+MIN_TITLE_SIZE = 14
+
+
+def _layout_title_box(text: str, font_size: int, box_w: int, box_h: int | None) -> tuple[str, int, int, str | None]:
+    """Wrap and shrink `text` until it fits the title box.
+
+    Returns (wrapped_text, font_size, line_spacing, font_path). The font file is
+    also passed to drawtext so the measured metrics are the rendered metrics.
+    """
+
+    font_path = _title_font_path()
+    if font_path and ImageFont is not None:
+        try:
+            lines: list[str] = []
+            spacing = 0
+            for size in range(max(MIN_TITLE_SIZE, int(font_size)), MIN_TITLE_SIZE - 1, -2):
+                font = ImageFont.truetype(font_path, size)
+                spacing = max(1, round(size * 0.15))
+                lines = [line for paragraph in text.split("\n") for line in _wrap_paragraph(font, paragraph, box_w)]
+                ascent, descent = font.getmetrics()
+                pitch = ascent + descent + spacing
+                fits_width = all(font.getlength(line) <= box_w for line in lines)
+                fits_height = box_h is None or len(lines) * pitch <= box_h
+                if fits_width and fits_height:
+                    return "\n".join(lines), size, spacing, font_path
+            # Floor size: hard-split oversized words so the width always fits.
+            lines = [part for line in lines for part in _hard_split(font, line, box_w)]
+            return "\n".join(lines), MIN_TITLE_SIZE, spacing, font_path
+        except Exception:  # pragma: no cover - corrupt/missing font metrics
+            pass
+    for size in range(max(MIN_TITLE_SIZE, int(font_size)), MIN_TITLE_SIZE - 1, -2):
+        chars_per_line = max(4, int(box_w / (size * 0.72)))
+        lines = [
+            line
+            for paragraph in text.split("\n")
+            for line in (textwrap.wrap(paragraph, width=chars_per_line, break_long_words=True) or [""])
+        ]
+        if box_h is None or len(lines) * size * 1.4 <= box_h:
+            return "\n".join(lines), size, max(1, round(size * 0.15)), None
+    return "\n".join(lines), MIN_TITLE_SIZE, max(1, round(MIN_TITLE_SIZE * 0.15)), None
+
+
 def _color(value: Any, default: str) -> str:
     candidate = str(value or default)
     if not _COLOR_RE.fullmatch(candidate):
@@ -281,7 +384,7 @@ def _position(position: Any, width_expr: str = "w", height_expr: str = "h") -> t
     return named.get(position, named["bottom_right"])
 
 
-def build_video_filter(spec: RenderSpec, ass_path: str | None, logo_input_index: int | None) -> tuple[str, str]:
+def build_video_filter(spec: RenderSpec, ass_path: str | None, logo_input_index: int | None, overlay_dir: str | None = None) -> tuple[str, str]:
     """Return (filter_complex, final_label) for a validated render."""
     if spec.mode == "center_crop":
         # Crop in source coordinates first so the focal-strategy result is an
@@ -321,18 +424,29 @@ def build_video_filter(spec: RenderSpec, ass_path: str | None, logo_input_index:
             parts.append(f"[0:v]crop={crop_w}:{crop_h}:'{safe_x}':'{safe_y}',scale={OUTPUT_WIDTH}:960[v{name}]")
         filters = [*parts, "[vtop][vbottom]vstack=inputs=2[v0]"]
 
-    overlay_filters, current = build_overlay_filters(spec, "v0", ass_path, logo_input_index)
+    overlay_filters, current = build_overlay_filters(spec, "v0", ass_path, logo_input_index, overlay_dir)
     filters.extend(overlay_filters)
     return ";".join(filters), current
 
 
-def build_overlay_filters(spec: RenderSpec, current: str, ass_path: str | None, logo_input_index: int | None) -> tuple[list[str], str]:
+def build_overlay_filters(
+    spec: RenderSpec,
+    current: str,
+    ass_path: str | None,
+    logo_input_index: int | None,
+    overlay_dir: str | None = None,
+) -> tuple[list[str], str]:
     """Append captions, logo, and text overlays to the ``current`` label.
 
     Shared by the ffmpeg filter-graph renderer and the v10 compositor, whose
     per-frame crops are piped to ffmpeg as rawvideo and receive the identical
     overlay chain in the same encode.  ``logo_input_index`` is the ffmpeg input
     carrying the (single-frame) logo image, or ``None`` when absent.
+
+    ``overlay_dir`` receives one ``overlay_{i}.txt`` per text overlay so
+    drawtext renders real line breaks via ``textfile`` (literal ``\\n`` in the
+    ``text`` option is drawn as visible characters, not line feeds).  Callers
+    without a scratch directory fall back to inline escaped text.
     """
     filters: list[str] = []
     if ass_path:
@@ -352,27 +466,49 @@ def build_overlay_filters(spec: RenderSpec, current: str, ass_path: str | None, 
         filters.extend([f"[{logo_input_index}:v]scale={width}:{height},format=rgba,colorchannelmixer=aa={opacity:g}[logo]", f"[{current}][logo]overlay={x}:{y}[vlogo]"])
         current = "vlogo"
     for index, overlay in enumerate(spec.text_overlays):
-        text = _escape_filter_text(overlay["text"])
         size = int(_number(overlay.get("size", 52), f"text_overlays[{index}].size", 1))
         opacity = min(1.0, _number(overlay.get("opacity", 1), f"text_overlays[{index}].opacity", 0))
         color = _color(overlay.get("color"), "white")
+        font_path = None
+        line_spacing = None
+        text = overlay["text"]
         # drawtext uses text dimensions rather than overlay dimensions.
         pos = overlay.get("position", "top_left")
         text_positions = {"top_left": ("40", "40"), "top_center": ("(w-text_w)/2", "40"), "top_right": ("w-text_w-40", "40"), "center": ("(w-text_w)/2", "(h-text_h)/2"), "bottom_left": ("40", "h-text_h-40"), "bottom_center": ("(w-text_w)/2", "h-text_h-40"), "bottom_right": ("w-text_w-40", "h-text_h-40")}
-        max_width = overlay.get("max_width")
         if overlay.get("x") is not None and overlay.get("y") is not None:
             x_val = int(_number(overlay['x'], f'text_overlays[{index}].x', 0))
-            y = f"{int(_number(overlay['y'], f'text_overlays[{index}].y', 0))}"
-            if max_width is not None and "\n" in overlay["text"]:
-                # Center multi-line text within the title box.
+            y_val = int(_number(overlay['y'], f'text_overlays[{index}].y', 0))
+            max_width = overlay.get("max_width")
+            if max_width is not None:
+                # Template title box: wrap + shrink to fit, then center the
+                # rendered block inside the box on both axes like the preview.
                 box_w = int(_number(max_width, f"text_overlays[{index}].max_width", 1))
+                box_h = int(_number(overlay["max_height"], f"text_overlays[{index}].max_height", 1)) if overlay.get("max_height") is not None else None
+                text, size, line_spacing, font_path = _layout_title_box(text, size, box_w, box_h)
                 x = f"{x_val}+({box_w}-text_w)/2"
+                y = f"{y_val}+({box_h}-text_h)/2" if box_h is not None else f"{y_val}"
             else:
                 x = f"{x_val}"
+                y = f"{y_val}"
         else:
             x, y = text_positions.get(pos, text_positions["top_left"])
+        if overlay_dir is not None:
+            overlay_path = Path(overlay_dir) / f"overlay_{index}.txt"
+            overlay_path.write_text(text, encoding="utf-8")
+            text_arg = f"textfile='{_escape_filter_path(str(overlay_path))}'"
+        else:
+            text_arg = f"text='{_escape_filter_text(text)}'"
+        options = [text_arg, f"fontsize={size}", "expansion=none", f"fontcolor={color}@{opacity:g}"]
+        if font_path:
+            options.append(f"fontfile='{_escape_filter_path(font_path)}'")
+        if line_spacing:
+            options.append(f"line_spacing={line_spacing}")
+        if "\n" in text:
+            options.append("text_align=C")
+        options.append(f"x={x}")
+        options.append(f"y={y}")
         label = f"vtext{index}"
-        filters.append(f"[{current}]drawtext=text='{text}':fontsize={size}:fontcolor={color}@{opacity:g}:x={x}:y={y}[{label}]")
+        filters.append(f"[{current}]drawtext={':'.join(options)}[{label}]")
         current = label
     return filters, current
 
@@ -417,7 +553,7 @@ def write_ass_captions(spec: RenderSpec, path: str) -> None:
 
 def render(spec: RenderSpec, input_path: str, output_path: str, ass_path: str | None = None, logo_path: str | None = None, timeout: int = 3500) -> None:
     """Run ffmpeg with an argument array; raises a concise error on failure."""
-    filter_graph, final_label = build_video_filter(spec, ass_path, 1 if logo_path else None)
+    filter_graph, final_label = build_video_filter(spec, ass_path, 1 if logo_path else None, str(Path(output_path).parent))
     command = ["ffmpeg", "-nostdin", "-hide_banner", "-y", "-ss", f"{spec.trim_start:g}", "-t", f"{spec.duration:g}", "-i", input_path]
     if logo_path:
         # A single-frame image input (no -loop 1) is held by the overlay

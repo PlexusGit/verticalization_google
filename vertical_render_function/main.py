@@ -234,7 +234,7 @@ def _render_with_v10(
         logger.info("v10 plano publicado em %s", artifact_uri)
 
     def overlay_builder(input_label: str, logo_index: int | None):
-        return build_overlay_filters(spec, input_label, ass_path, logo_index)
+        return build_overlay_filters(spec, input_label, ass_path, logo_index, cfg.work)
 
     stats = render_plan(
         cfg,

@@ -16,7 +16,7 @@ from pydantic import ValidationError
 from app.auth import get_current_user, request_is_admin, request_is_authenticated
 from app.config import settings
 from app.db import get_db
-from app.models import AllowedUserInput, ApprovalRequest, ChapterInput, ImportGCSRequest, RenderRequest, VideoStatus, VideoTemplateInput
+from app.models import AllowedUserInput, ApprovalRequest, BrandingOptions, ChapterInput, ImportGCSRequest, RenderRequest, VideoStatus, VideoTemplateInput
 from app.services import gemini, srt, storage
 from app.services.processing import (
     create_video_record,
@@ -807,10 +807,38 @@ async def queue_render(request: Request, video_id: str, chapter_id: str, backgro
         options = RenderRequest.model_validate(await request.json())
     except ValidationError as exc:
         return JSONResponse({"error": exc.errors()}, status_code=422)
-    chapter_ref = _video_snapshot(video_id).reference.collection("chapters").document(chapter_id)
-    if not chapter_ref.get().exists:
+    video_snapshot = _video_snapshot(video_id)
+    chapter_snapshot = video_snapshot.reference.collection("chapters").document(chapter_id).get()
+    if not chapter_snapshot.exists:
         return JSONResponse({"error": "Capítulo não encontrado"}, status_code=404)
-    chapter_ref.update({"render_options": options.model_dump(mode="json"), "updated_at": firestore.SERVER_TIMESTAMP})
+    chapter = chapter_snapshot.to_dict() or {}
+    video_data = video_snapshot.to_dict() or {}
+
+    # Resolve the chapter's template the same way approval does: explicit id
+    # wins, "none" is a sticky opt-out, empty/missing inherits the default.
+    resolved_id = _resolve_template_choice(options.template_id, _default_template_id())
+    template = None
+    if resolved_id:
+        template_snapshot = get_db().collection(settings.COLLECTION_TEMPLATES).document(resolved_id).get()
+        if not template_snapshot.exists:
+            return JSONResponse({"error": "O template selecionado não existe"}, status_code=400)
+        template = template_snapshot.to_dict() or {}
+        options.branding = BrandingOptions.model_validate(_template_branding(template, video_data, chapter))
+    else:
+        options.branding = BrandingOptions()
+    # Persist the raw choice (None = auto) so the card dropdown and approval
+    # stay in sync, and the chapter still follows the default template.
+    options.template_id = None
+    chapter_snapshot.reference.set(
+        {
+            "render_options": options.model_dump(mode="json"),
+            "template_id": resolved_id and None if options.template_id == "none" else (options.template_id if options.template_id else None),
+            "template_title": (template or {}).get("title"),
+            "template_snapshot": template,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        },
+        merge=True,
+    )
     background_tasks.add_task(render_chapter, video_id, chapter_id, options, final=options.final)
     return JSONResponse({"status": "QUEUED"}, status_code=202)
 

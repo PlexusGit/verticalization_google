@@ -117,6 +117,51 @@ def test_template_geometry_uses_exact_logo_and_title_coordinates():
     assert label == "vtext0"
 
 
+def test_title_box_wraps_and_centers_text(tmp_path):
+    spec = renderer.validate_request(payload(
+        text_overlays=[{
+            "text": "ENCONTRO RELAMPAGO DE EMERGENCIA COM TITULO MUITO LONGO QUE TRANSBORDARIA A CAIXA",
+            "x": 108, "y": 346, "max_width": 864, "max_height": 230, "size": 54,
+        }],
+    ))
+    graph, label = renderer.build_video_filter(spec, None, None, str(tmp_path))
+    overlay_file = tmp_path / "overlay_0.txt"
+    assert overlay_file.exists()
+    wrapped = overlay_file.read_text()
+    # Long titles are wrapped into real line breaks written to a text file —
+    # drawtext's inline \n would render literal characters, not line feeds.
+    assert "\n" in wrapped
+    # The block is centered inside the 864x230 box at (108, 346).
+    assert "x=108+(864-text_w)/2" in graph
+    assert "y=346+(230-text_h)/2" in graph
+    assert "text_align=C" in graph
+    assert "line_spacing=" in graph
+    if renderer._title_font_path():
+        assert "fontfile=" in graph
+
+
+def test_title_box_shrinks_font_until_text_fits(tmp_path):
+    spec = renderer.validate_request(payload(
+        text_overlays=[{
+            "text": "UMA " * 60,
+            "x": 0, "y": 0, "max_width": 300, "max_height": 120, "size": 80,
+        }],
+    ))
+    graph, _ = renderer.build_video_filter(spec, None, None, str(tmp_path))
+    import re
+    size = int(re.search(r"fontsize=(\d+)", graph).group(1))
+    assert size < 80
+
+
+def test_title_box_hard_splits_oversized_words(tmp_path):
+    spec = renderer.validate_request(payload(
+        text_overlays=[{"text": "SUPERCALIFRAGILISTICOESPIALIDOSO" * 3, "x": 0, "y": 0, "max_width": 200, "size": 40}],
+    ))
+    renderer.build_video_filter(spec, None, None, str(tmp_path))
+    lines = (tmp_path / "overlay_0.txt").read_text().split("\n")
+    assert all(len(line) < 40 for line in lines)
+
+
 def test_render_uses_argument_array_and_checks_subprocess():
     spec = renderer.validate_request(payload())
     with patch("renderer.subprocess.run") as run:
