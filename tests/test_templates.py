@@ -163,3 +163,119 @@ def test_templates_page_requires_login_and_renders_for_user(monkeypatch):
     assert allowed.status_code == 200
     assert "Criar template" in allowed.text
     assert 'href="/templates"' in allowed.text
+
+
+class TemplateDoc:
+    def __init__(self, doc_id, data):
+        self.id = doc_id
+        self.reference = self
+        self._data = dict(data)
+        self.exists = bool(data)
+        self.written = None
+        self.updates = []
+
+    def to_dict(self):
+        return self._data
+
+    def get(self):
+        return self
+
+    def set(self, data, merge=False):
+        if merge:
+            self._data.update(data)
+        else:
+            self._data = data
+        self.written = data
+
+    def update(self, data):
+        self.updates.append(data)
+        self._data.update(data)
+
+
+class TemplateCollection:
+    def __init__(self, docs=None):
+        self.docs = {doc.id: doc for doc in (docs or [])}
+        self.new_reference = TemplateDoc("template_new", {})
+
+    def document(self, doc_id=None):
+        if doc_id is None:
+            return self.new_reference
+        return self.docs.setdefault(doc_id, TemplateDoc(doc_id, {}))
+
+    def stream(self):
+        return list(self.docs.values())
+
+
+class TemplateDB:
+    def __init__(self, collection):
+        self.collection_obj = collection
+
+    def collection(self, _name):
+        return self.collection_obj
+
+
+def test_update_template_edits_fields_and_keeps_logo(monkeypatch):
+    existing = TemplateDoc(
+        "tpl_1",
+        {
+            "id": "tpl_1",
+            "title": "Antigo",
+            "title_macro": "{chapter_title}",
+            "logo": {"gcs_path": "templates/tpl_1/logo.png", "x_percent": 68, "y_percent": 5, "width_percent": 27, "height_percent": 10},
+            "is_default": False,
+        },
+    )
+    collection = TemplateCollection([existing])
+    monkeypatch.setattr(api, "request_is_authenticated", lambda _request: True)
+    monkeypatch.setattr(api, "get_db", lambda: TemplateDB(collection))
+
+    response = client.put(
+        "/api/templates/tpl_1",
+        data={"title": "Novo nome", "title_macro": "{video_title}: {chapter_title}", "title_x_percent": 5, "title_y_percent": 10, "title_width_percent": 90, "title_height_percent": 10, "title_font_size": 70, "logo_x_percent": 50, "is_default": "true"},
+    )
+
+    assert response.status_code == 200
+    assert existing.written["title"] == "Novo nome"
+    assert existing.written["is_default"] is True
+    assert existing.written["title_geometry"]["font_size"] == 70
+    # Logo kept, geometry updated from the form.
+    assert existing.written["logo"]["gcs_path"] == "templates/tpl_1/logo.png"
+    assert existing.written["logo"]["x_percent"] == 50
+
+
+def test_update_template_returns_404_for_missing_template(monkeypatch):
+    monkeypatch.setattr(api, "request_is_authenticated", lambda _request: True)
+    monkeypatch.setattr(api, "get_db", lambda: TemplateDB(TemplateCollection()))
+
+    response = client.put("/api/templates/ghost", data={"title": "X"})
+
+    assert response.status_code == 404
+
+
+def test_setting_default_template_unsets_others(monkeypatch):
+    old_default = TemplateDoc("tpl_old", {"id": "tpl_old", "title": "Velho padrão", "is_default": True})
+    other = TemplateDoc("tpl_other", {"id": "tpl_other", "title": "Outro", "is_default": True})
+    collection = TemplateCollection([old_default, other])
+    monkeypatch.setattr(api, "request_is_authenticated", lambda _request: True)
+    monkeypatch.setattr(api, "get_db", lambda: TemplateDB(collection))
+    monkeypatch.setattr(api, "get_current_user", lambda _request: {"info": {"email": "editor@example.com"}})
+
+    response = client.post("/api/templates", data={"title": "Novo padrão", "title_macro": "{chapter_title}", "is_default": "true"})
+
+    assert response.status_code == 201
+    assert collection.new_reference.written["is_default"] is True
+    # Every other default flag was cleared — only one default may exist.
+    for doc in (old_default, other):
+        assert any(update.get("is_default") is False for update in doc.updates)
+
+
+def test_create_template_without_default_flag_is_not_default(monkeypatch):
+    collection = TemplateCollection()
+    monkeypatch.setattr(api, "request_is_authenticated", lambda _request: True)
+    monkeypatch.setattr(api, "get_db", lambda: TemplateDB(collection))
+    monkeypatch.setattr(api, "get_current_user", lambda _request: {"info": {"email": "editor@example.com"}})
+
+    response = client.post("/api/templates", data={"title": "Simples", "title_macro": "{chapter_title}"})
+
+    assert response.status_code == 201
+    assert collection.new_reference.written["is_default"] is False

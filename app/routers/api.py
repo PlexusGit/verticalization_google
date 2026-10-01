@@ -346,6 +346,35 @@ async def create_user(request: Request):
     return JSONResponse({"email": payload.email, "role": payload.role}, status_code=201)
 
 
+def _clear_default_templates(collection, keep_id: str | None = None) -> None:
+    """Only one template may be the default; unset it on every other document."""
+
+    for document in collection.stream():
+        if keep_id and document.id == keep_id:
+            continue
+        if (document.to_dict() or {}).get("is_default"):
+            document.reference.update({"is_default": False, "updated_at": firestore.SERVER_TIMESTAMP})
+
+
+def _default_template_id() -> str | None:
+    for document in get_db().collection(settings.COLLECTION_TEMPLATES).stream():
+        if (document.to_dict() or {}).get("is_default"):
+            return document.id
+    return None
+
+
+def _resolve_template_choice(choice: str | None, default_template_id: str | None) -> str | None:
+    """Map a chapter's template selection to a concrete template id.
+
+    ``"none"`` is the explicit opt-out sentinel; empty/missing means "auto",
+    which resolves to the default template (or no template when none exists).
+    """
+
+    if choice == "none":
+        return None
+    return choice or default_template_id
+
+
 @router.get("/templates")
 async def list_templates(request: Request):
     if response := _unauthorized(request):
@@ -360,8 +389,33 @@ async def list_templates(request: Request):
             except Exception:
                 data["logo_preview_url"] = None
         templates.append(data)
-    templates.sort(key=lambda item: (item.get("title") or "").lower())
+    templates.sort(key=lambda item: (not item.get("is_default"), (item.get("title") or "").lower()))
     return JSONResponse(_serialize({"templates": templates}))
+
+
+async def _template_logo_upload(logo: UploadFile | None, template_id: str, payload: VideoTemplateInput):
+    """Validate and store a template logo; returns the logo dict or a 400 response."""
+
+    if not logo or not logo.filename:
+        return None, None
+    extension = os.path.splitext(logo.filename)[1].lower()
+    if extension not in _ALLOWED_LOGO_EXTENSIONS:
+        return None, JSONResponse({"error": "Use PNG, JPG ou WebP"}, status_code=400)
+    raw = await logo.read()
+    if not raw or len(raw) > 10 * 1024 * 1024:
+        return None, JSONResponse({"error": "Logo vazio ou maior que 10 MB"}, status_code=400)
+    logo_path = f"templates/{template_id}/logo{extension}"
+    storage.upload_bytes(raw, logo_path, logo.content_type or "application/octet-stream")
+    return {
+        "gcs_path": logo_path,
+        "position": payload.logo_position,
+        "x_percent": payload.logo_x_percent,
+        "y_percent": payload.logo_y_percent,
+        "width_percent": payload.logo_width_percent,
+        "height_percent": payload.logo_height_percent,
+        "opacity": 1,
+        "margin": 40,
+    }, None
 
 
 @router.post("/templates")
@@ -380,6 +434,7 @@ async def create_template(
     title_width_percent: float = Form(80),
     title_height_percent: float = Form(12),
     title_font_size: int = Form(54),
+    is_default: bool = Form(False),
     logo: UploadFile | None = File(None),
 ):
     if response := _unauthorized(request):
@@ -406,26 +461,9 @@ async def create_template(
         return JSONResponse({"error": exc.errors()}, status_code=422)
     collection = get_db().collection(settings.COLLECTION_TEMPLATES)
     reference = collection.document()
-    logo_data = None
-    if logo and logo.filename:
-        extension = os.path.splitext(logo.filename)[1].lower()
-        if extension not in _ALLOWED_LOGO_EXTENSIONS:
-            return JSONResponse({"error": "Use PNG, JPG ou WebP"}, status_code=400)
-        raw = await logo.read()
-        if not raw or len(raw) > 10 * 1024 * 1024:
-            return JSONResponse({"error": "Logo vazio ou maior que 10 MB"}, status_code=400)
-        logo_path = f"templates/{reference.id}/logo{extension}"
-        storage.upload_bytes(raw, logo_path, logo.content_type or "application/octet-stream")
-        logo_data = {
-            "gcs_path": logo_path,
-            "position": payload.logo_position,
-            "x_percent": payload.logo_x_percent,
-            "y_percent": payload.logo_y_percent,
-            "width_percent": payload.logo_width_percent,
-            "height_percent": payload.logo_height_percent,
-            "opacity": 1,
-            "margin": 40,
-        }
+    logo_data, error = await _template_logo_upload(logo, reference.id, payload)
+    if error:
+        return error
     current_user = get_current_user(request) or {}
     data = {
         "id": reference.id,
@@ -440,12 +478,102 @@ async def create_template(
             "height_percent": payload.title_height_percent,
             "font_size": payload.title_font_size,
         },
+        "is_default": bool(is_default),
         "created_by": (current_user.get("info") or {}).get("email", ""),
         "created_at": firestore.SERVER_TIMESTAMP,
         "updated_at": firestore.SERVER_TIMESTAMP,
     }
     reference.set(data)
+    if is_default:
+        _clear_default_templates(collection, keep_id=reference.id)
     return JSONResponse({"id": reference.id, "title": payload.title}, status_code=201)
+
+
+@router.put("/templates/{template_id}")
+async def update_template(
+    request: Request,
+    template_id: str,
+    title: str = Form(...),
+    title_macro: str = Form("{chapter_title}"),
+    logo_position: str = Form("top-right"),
+    title_position: str = Form("top-center"),
+    logo_x_percent: float = Form(68),
+    logo_y_percent: float = Form(5),
+    logo_width_percent: float = Form(27),
+    logo_height_percent: float = Form(10),
+    title_x_percent: float = Form(10),
+    title_y_percent: float = Form(18),
+    title_width_percent: float = Form(80),
+    title_height_percent: float = Form(12),
+    title_font_size: int = Form(54),
+    is_default: bool = Form(False),
+    logo: UploadFile | None = File(None),
+):
+    """Edit an existing template; the logo is kept unless a new file is sent."""
+
+    if response := _unauthorized(request):
+        return response
+    collection = get_db().collection(settings.COLLECTION_TEMPLATES)
+    reference = collection.document(template_id)
+    snapshot = reference.get()
+    if not snapshot.exists:
+        return JSONResponse({"error": "Template não encontrado"}, status_code=404)
+    try:
+        payload = VideoTemplateInput.model_validate(
+            {
+                "title": title,
+                "title_macro": title_macro,
+                "logo_position": logo_position,
+                "title_position": title_position,
+                "logo_x_percent": logo_x_percent,
+                "logo_y_percent": logo_y_percent,
+                "logo_width_percent": logo_width_percent,
+                "logo_height_percent": logo_height_percent,
+                "title_x_percent": title_x_percent,
+                "title_y_percent": title_y_percent,
+                "title_width_percent": title_width_percent,
+                "title_height_percent": title_height_percent,
+                "title_font_size": title_font_size,
+            }
+        )
+    except ValidationError as exc:
+        return JSONResponse({"error": exc.errors()}, status_code=422)
+    logo_data, error = await _template_logo_upload(logo, template_id, payload)
+    if error:
+        return error
+    if logo_data is None:
+        # Keep the stored logo file but apply the (possibly moved) geometry.
+        logo_data = (snapshot.to_dict() or {}).get("logo")
+        if logo_data:
+            logo_data = {
+                **logo_data,
+                "position": payload.logo_position,
+                "x_percent": payload.logo_x_percent,
+                "y_percent": payload.logo_y_percent,
+                "width_percent": payload.logo_width_percent,
+                "height_percent": payload.logo_height_percent,
+            }
+    reference.set(
+        {
+            "title": payload.title,
+            "title_macro": payload.title_macro,
+            "logo": logo_data,
+            "title_position": payload.title_position,
+            "title_geometry": {
+                "x_percent": payload.title_x_percent,
+                "y_percent": payload.title_y_percent,
+                "width_percent": payload.title_width_percent,
+                "height_percent": payload.title_height_percent,
+                "font_size": payload.title_font_size,
+            },
+            "is_default": bool(is_default),
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        },
+        merge=True,
+    )
+    if is_default:
+        _clear_default_templates(collection, keep_id=template_id)
+    return JSONResponse({"id": template_id, "title": payload.title})
 
 
 @router.get("/videos")
@@ -707,11 +835,20 @@ async def approve(request: Request, video_id: str, background_tasks: BackgroundT
     if any(chapter_id not in available for chapter_id in selected):
         return JSONResponse({"error": "Selecione capítulos válidos"}, status_code=400)
 
-    templates = {}
+    # Resolve each chapter's effective template: an explicit id wins, the
+    # "none" sentinel forces no template, and an empty/missing choice inherits
+    # the default template (the "user did not change the selection" case).
+    default_template_id = _default_template_id()
+    choices, resolved = {}, {}
     for chapter_id in selected:
-        template_id = payload.template_ids.get(chapter_id)
-        if not template_id or template_id in templates:
-            continue
+        choice = payload.template_ids.get(chapter_id)
+        if choice is None:
+            choice = (available[chapter_id].to_dict() or {}).get("template_id")
+        choices[chapter_id] = choice
+        resolved[chapter_id] = _resolve_template_choice(choice, default_template_id)
+
+    templates = {}
+    for template_id in {item for item in resolved.values() if item}:
         snapshot = get_db().collection(settings.COLLECTION_TEMPLATES).document(template_id).get()
         if not snapshot.exists:
             return JSONResponse({"error": "Um dos templates selecionados não existe"}, status_code=400)
@@ -721,21 +858,31 @@ async def approve(request: Request, video_id: str, background_tasks: BackgroundT
     for chapter_id in selected:
         chapter_document = available[chapter_id]
         chapter = chapter_document.to_dict() or {}
-        template_id = payload.template_ids.get(chapter_id)
+        template_id = resolved[chapter_id]
         approved_templates[chapter_id] = template_id
+        raw_options = dict(chapter.get("render_options") or {})
         if not template_id:
-            chapter_document.reference.set(
-                {"template_id": None, "template_title": None, "template_snapshot": None, "updated_at": firestore.SERVER_TIMESTAMP},
-                merge=True,
-            )
+            # Keep the user's raw choice: "none" stays sticky, while an empty
+            # choice stays null so a future default template still applies.
+            update = {
+                "template_id": choices[chapter_id] or None,
+                "template_title": None,
+                "template_snapshot": None,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            }
+            if raw_options.get("branding"):
+                raw_options.pop("branding", None)
+                update["render_options"] = RenderRequest.model_validate(raw_options).model_dump(mode="json")
+            chapter_document.reference.set(update, merge=True)
             continue
         template = templates[template_id]
-        raw_options = chapter.get("render_options") or {}
         raw_options["branding"] = _template_branding(template, video_data, chapter)
         options = RenderRequest.model_validate(raw_options).model_dump(mode="json")
         chapter_document.reference.set(
             {
-                "template_id": template_id,
+                # Keep the raw choice (null = auto) so the chapter follows the
+                # default template if it changes before the next approval.
+                "template_id": choices[chapter_id] or None,
                 "template_title": template.get("title"),
                 "template_snapshot": template,
                 "render_options": options,

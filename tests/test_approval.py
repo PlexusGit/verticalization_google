@@ -59,6 +59,7 @@ def test_approval_applies_selected_template_to_chapter(monkeypatch):
 
     class Templates:
         def document(self, _template_id): return TemplateReference()
+        def stream(self): return []
 
     class DB:
         def collection(self, _name): return Templates()
@@ -79,6 +80,118 @@ def test_approval_applies_selected_template_to_chapter(monkeypatch):
     assert chapter.written["template_id"] == "template_1"
     assert chapter.written["render_options"]["branding"]["text"]["text"] == "Jornal: Economia"
     assert video.reference.written["approved_templates"] == {chapter.id: "template_1"}
+
+
+class _ApproveChapter:
+    def __init__(self, chapter_id, template_id=None, render_options=None):
+        self.id = chapter_id
+        self.reference = self
+        self.written = None
+        self._template_id = template_id
+        self._render_options = render_options or {}
+
+    def to_dict(self):
+        return {"id": self.id, "title": "Capítulo", "render_options": self._render_options, "template_id": self._template_id}
+
+    def set(self, data, merge=False):
+        self.written = data
+
+
+class _TemplateDoc:
+    def __init__(self, doc_id, data):
+        self.id = doc_id
+        self.reference = self
+        self._data = data
+        self.exists = True
+        self.updates = []
+
+    def to_dict(self):
+        return self._data
+
+    def get(self):
+        return self
+
+    def update(self, data):
+        self.updates.append(data)
+        self._data.update(data)
+
+
+class _TemplateCollection:
+    def __init__(self, docs):
+        self.docs = {doc.id: doc for doc in docs}
+
+    def document(self, doc_id=None):
+        return self.docs[doc_id]
+
+    def stream(self):
+        return list(self.docs.values())
+
+
+def _approve_mocks(monkeypatch, chapter, template_docs):
+    class Chapters:
+        def stream(self): return [chapter]
+
+    class VideoReference:
+        def __init__(self): self.written = None
+        def collection(self, _name): return Chapters()
+        def update(self, data): self.written = data
+
+    class Video:
+        exists = True
+        def __init__(self): self.reference = VideoReference()
+        def to_dict(self): return {"title": "Jornal", "status": VideoStatus.PENDING_REVIEW.value}
+
+    class DB:
+        def collection(self, _name): return _TemplateCollection(template_docs)
+
+    monkeypatch.setattr(api, "_unauthorized", lambda _request: None)
+    monkeypatch.setattr(api, "_video_snapshot", lambda _video_id: Video())
+    monkeypatch.setattr(api, "get_db", lambda: DB())
+    monkeypatch.setattr(api, "render_final_chapters", lambda *_args: None)
+
+
+def test_approval_uses_default_template_when_no_choice(monkeypatch):
+    chapter = _ApproveChapter("chapter_001")
+    default = _TemplateDoc("tpl_default", {"id": "tpl_default", "title": "Padrão", "title_macro": "{chapter_title}", "is_default": True, "logo": None})
+    _approve_mocks(monkeypatch, chapter, [default])
+
+    response = client.post("/api/video/v_test/approve", json={"chapter_ids": [chapter.id], "template_ids": {}})
+
+    assert response.status_code == 202
+    assert chapter.written["render_options"]["branding"]["text"]["text"] == "Capítulo"
+    # The chapter stays in "auto" mode so it follows the default on re-approval.
+    assert chapter.written["template_id"] is None
+    assert chapter.written["template_title"] == "Padrão"
+
+
+def test_approval_none_sentinel_overrides_default(monkeypatch):
+    chapter = _ApproveChapter("chapter_001", render_options={"branding": {"text": {"text": "old"}}})
+    default = _TemplateDoc("tpl_default", {"id": "tpl_default", "title": "Padrão", "is_default": True, "logo": None})
+    _approve_mocks(monkeypatch, chapter, [default])
+
+    response = client.post(
+        "/api/video/v_test/approve",
+        json={"chapter_ids": [chapter.id], "template_ids": {chapter.id: "none"}},
+    )
+
+    assert response.status_code == 202
+    assert chapter.written["template_id"] == "none"
+    assert chapter.written["template_snapshot"] is None
+    # A previously baked branding must not survive an explicit "no template".
+    assert chapter.written["render_options"]["branding"]["logo"] is None
+    assert chapter.written["render_options"]["branding"]["text"] is None
+
+
+def test_approval_stored_explicit_none_overrides_default(monkeypatch):
+    chapter = _ApproveChapter("chapter_001", template_id="none")
+    default = _TemplateDoc("tpl_default", {"id": "tpl_default", "title": "Padrão", "is_default": True, "logo": None})
+    _approve_mocks(monkeypatch, chapter, [default])
+
+    response = client.post("/api/video/v_test/approve", json={"chapter_ids": [chapter.id], "template_ids": {}})
+
+    assert response.status_code == 202
+    assert chapter.written["template_id"] == "none"
+    assert chapter.written["template_snapshot"] is None
 
 
 def test_retry_finals_only_renders_failed_chapters(monkeypatch):
