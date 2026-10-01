@@ -1,2 +1,5 @@
 -r requirements.txt
 pytest==8.3.5
+# Needed by the v10 planner unit tests; the heavier v10 deps (torch,
+# ultralytics, mediapipe) are optional and their tests skip when absent.
+scipy==1.16.3

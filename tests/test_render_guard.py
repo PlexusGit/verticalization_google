@@ -130,3 +130,35 @@ def test_latest_render_updates_chapter_fields(monkeypatch, chapter_ref):
     assert chapter_ref.data["draft_render_id"] == "draft_cccccccccc"
     assert chapter_ref.data["draft_status"] == "COMPLETED"
     assert chapter_ref.renders["draft_cccccccccc"]["status"] == "COMPLETED"
+
+
+def test_v10_render_drops_stale_v3_focal_points(monkeypatch, chapter_ref):
+    # A chapter previously rendered with the legacy engine keeps v3 focal
+    # points in render_options. A v10 render returns an empty point list plus
+    # a camera plan; the stale v3 trajectory must not be persisted under
+    # the v10 strategy version.
+    chapter_ref.data["render_options"] = {
+        "layout_mode": "center_crop",
+        "automatic_focal_points": [{"time": 0, "x": 100, "y": 50}],
+        "focal_strategy_version": 3,
+    }
+    monkeypatch.setattr(processing, "uuid", FakeUuidModule(["dddddddddddd"]))
+    monkeypatch.setattr(
+        processing.vertical_render,
+        "submit",
+        lambda _payload: {
+            "gcs_path": "v10-output.mp4",
+            "automatic_focal_points": [],
+            "focal_strategy_version": 10,
+            "camera_plan_gcs_path": "v_test/chapters/chapter_001/autoframe/v10/abc.plan.json.gz",
+            "camera_plan_fingerprint": "abc123",
+        },
+    )
+
+    render_chapter("v_test", "chapter_001", RenderRequest(), final=False)
+
+    options = chapter_ref.data["render_options"]
+    assert options["focal_strategy_version"] == 10
+    assert options["camera_plan_gcs_path"].endswith("abc.plan.json.gz")
+    assert options["camera_plan_fingerprint"] == "abc123"
+    assert "automatic_focal_points" not in options

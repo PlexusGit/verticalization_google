@@ -27,16 +27,19 @@ falha fechado quando não definido). Um corpo representativo é:
 }
 ```
 
-`center_crop` usa o YuNet localmente para detectar rostos em frames amostrados,
-bloqueia a pessoa por continuidade e usa `TrackerMIL` sobre cabeça, ombros e
-torso quando o rosto desaparece. Uma média móvel de três segundos, zona morta
-de 20%, histerese de 1,5 segundo e detecção de mudança de cena reduzem oscilações. A análise processa no máximo
-240 frames por capítulo, compacta a trajetória para até 24 keyframes e não chama
-APIs externas. Sem detecção ou em caso de falha, o recorte volta ao centro.
+`center_crop` usa a pipeline **autoframe v10** (`autoframe_v10/`): três passes
+offline — análise (PySceneDetect + YOLO-face + tracking por IoU + LR-ASD para
+locutor ativo), planejamento de câmera (histerese, planos `static`/`pan`/`track`,
+zoom fixo por segmento, headroom 42%) e composição frame a frame com
+legendas/logo/títulos na mesma codificação ffmpeg. O plano de câmera é
+fingerprintado e publicado no GCS como `*.plan.json.gz`; o render final reutiliza
+o plano exato do rascunho. Falhas v10 caem para um crop central determinístico;
+`AUTOFRAME_ENGINE=legacy` devolve o detector v3 (YuNet + keyframes) como
+rollback. Detalhes completos em `../autodetect.md`.
 `split_stack` porta o modelo de keyframes top/bottom x/y independente do RPP,
 incluindo easing de cosseno e limitação de crop. Tempos de legenda e tempos de
-keyframe são tempos absolutos da mídia de origem. O modelo YuNet vem do OpenCV
-Zoo; sua licença MIT está preservada em `models/LICENSE`.
+keyframe são tempos absolutos da mídia de origem. Licenças e proveniência dos
+modelos ML estão em `THIRD_PARTY_NOTICES.md`.
 
 Os caminhos no Firestore são `COLLECTION_VIDEOS/{video_id}/renders/{render_id}`
 e, quando fornecido, `COLLECTION_VIDEOS/{video_id}/chapters/{chapter_id}`. Os
@@ -51,7 +54,12 @@ python3 -m pip install -r requirements-test.txt
 ```
 
 `deploy.sh` lê `../.env`, envia para o Artifact Registry e implanta com limites
-de Cloud Run apropriados para renderização. A conta de serviço do runtime
+de Cloud Run apropriados para renderização. `TRANSCODE_USE_GPU=1` alterna para
+uma imagem CUDA (`--build-arg TORCH_INDEX=...cu128`) com L4/NVENC e
+`--execution-environment=gen2`; `0` mantém CPU/libx264. `AUTOFRAME_ENGINE`
+(v10|legacy) é repassado ao serviço. Os pesos ML (`models/`,
+`third_party/LR-ASD/weight/`) são rastreados por Git LFS — rode `git lfs pull`
+antes de buildar a imagem localmente. A conta de serviço do runtime
 precisa de acesso de leitura/escrita de objetos do Storage e escrita no
 Firestore. Para um tratamento de secrets mais robusto, configure o
 Cloud Run/Secret Manager após a primeira implantação em vez de manter `API_KEY`

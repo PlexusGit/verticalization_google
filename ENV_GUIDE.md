@@ -181,6 +181,14 @@ gcloud billing projects describe "$GOOGLE_CLOUD_PROJECT"
 - **Fase:** definir antes do deploy.
 - `0`: CPU, recomendado para o primeiro deploy e sem necessidade de quota GPU.
 - `1`: NVIDIA L4/NVENC. Requer região compatível e quota; o container ainda possui fallback para CPU se o NVENC falhar em runtime.
+- Aplica-se **também ao worker de renderização vertical** (`vertical_render_function/deploy.sh`): a análise da v10 roda YOLO-face em todos os frames do capítulo e o encoder usa NVENC; com `1` a imagem é construída com o índice PyTorch CUDA e o serviço sobe com L4 em `--execution-environment=gen2`.
+
+### `AUTOFRAME_ENGINE`
+
+- **Fase:** opcional; definir no `.env` antes do deploy ou do `run_all_local.sh`.
+- `legacy` (padrão de rollout): mantém o detector v3 (YuNet + keyframes FFmpeg); o código da v10 já vai na imagem, mas fica inerte até o flip.
+- `v10`: pipeline de três passes (YOLO-face + LR-ASD + câmera planejada) para `center_crop`. Ver `autodetect.md`.
+- `AUTOFRAME_DEVICE` e `AUTOFRAME_ENCODER` são overrides opcionais de dispositivo/encoder quando `TRANSCODE_USE_GPU` não basta.
 
 ### `CLOUD_RUN_DOMAIN`
 

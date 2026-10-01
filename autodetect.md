@@ -1,334 +1,135 @@
-# Enquadramento automático (estratégia v3)
+# Enquadramento automático (estratégia v10)
 
-Este documento descreve o comportamento atual do algoritmo de enquadramento automático do Plexus Vertical Cuts, desde a análise do vídeo até a geração do recorte vertical pelo FFmpeg. Esta é a **versão 3 da estratégia** (`FOCAL_STRATEGY_VERSION = 3`): além do rastreamento facial, ela adiciona detecção de locutor ativo, previsão de movimento, suavização adaptativa, composição com respiro de cabeça e amostragem em duas passadas.
+Este documento descreve o comportamento atual do algoritmo de enquadramento automático do Plexus Vertical Cuts. Esta é a **versão 10 da estratégia** (`AUTOFRAME_STRATEGY_VERSION = 10`, `focal_strategy_version = 10` nos `render_options` do capítulo): em vez de rastrear o rosto frame a frame com heurísticas reativas, o vídeo passa por **três passes offline** — análise, planejamento de câmera e composição — com look-ahead sobre o capítulo inteiro antes de decidir para onde a câmera virtual olha.
+
+> A estratégia anterior (v3, YuNet + fluxo óptico + keyframes no FFmpeg) continua disponível como caminho de rollback: basta definir `AUTOFRAME_ENGINE=legacy` no `.env`/deploy do worker. O modo manual `split_stack` não é afetado pela v10.
 
 ## Objetivo
 
-O enquadramento automático transforma um vídeo de origem em uma composição vertical 9:16, mantendo a pessoa principal dentro da área visível, antecipando movimentos rápidos e evitando oscilações de câmera.
+Transformar um vídeo de origem em uma composição vertical 9:16 mantendo o falante ativo dentro da área visível, com planos de duração mínima, transições controladas (corte seco ou pan) e zoom variável — eliminando a "respiração" do crop, a perseguição atrasada e a troca errada de falante por um frame isolado.
 
-O sistema continua econômico:
-
-- executa no próprio worker de renderização;
-- não chama APIs externas de visão computacional;
-- usa detecção facial local com YuNet e fluxo óptico do OpenCV;
-- concentra a detecção facial (cara) apenas nos trechos com movimento;
-- reutiliza resultados entre o rascunho e o render final, com controle de versão;
-- mantém o recorte central como fallback seguro.
-
-A estratégia atual também cobre um caso que antes ficava sem solução:
-
-1. **Quem está falando**: entre vários rostos, a atividade dos lábios escolhe o locutor, com histerese curta contra trocas impulsivas.
-
-Sem rostos, o comportamento é deliberadamente simples: manter o último enquadramento por alguns segundos e recentralizar.
-
-## Modos de enquadramento
-
-### `center_crop`
-
-É o modo automático padrão (na interface, **Foco automático em rostos**).
-
-O worker analisa o capítulo, escolhe o foco principal e cria uma trajetória temporal. O renderer converte essa trajetória em um recorte vertical dinâmico de 1080 × 1920.
-
-### `split_stack`
-
-Cria duas janelas independentes, uma na metade superior e outra na metade inferior do vídeo vertical. As posições continuam definidas por âncoras manuais (`keyframes_top` e `keyframes_bottom`); a seleção automática de duas pessoas segue como evolução planejada (ver o fim deste documento).
-
-## Fluxo implementado
+## Arquitetura em três passes
 
 ```text
 Vídeo do capítulo
        │
        ▼
-Passada 1 — varredura barata (movimento, sem detecção facial)
+PASSE 1 — analyze (autoframe_v10/analyze.py)
+  cenas (PySceneDetect) · áudio+VAD · rostos (YOLO-face)
+  tracks por IoU · locutor ativo (LR-ASD) · fallback visual (FaceMesh)
        │
-       ▼
-Segmentos ativos → plano de amostragem denso/coeso
+       ▼  analysis.json (workdir temporário)
+PASSE 2 — plan (autoframe_v10/plan.py)
+  falante por frame com histerese · segmentos de plano
+  static / pan / track / nobody · zoom e headroom por segmento
        │
-       ▼
-Passada 2 — detecção facial com YuNet (com landmarks)
-       │
-       ▼
-Seleção do foco (locutor ativo + grupo + composição)
-       │
-       ▼
-Fluxo óptico / tracker corporal durante ausência facial
-       │
-       ▼
-Recentralizar quando a ausência se prolonga
-       │
-       ▼
-Previsão de velocidade + suavização adaptativa
-       │
-       ▼
-Pontos focais absolutos (keyframes)
-       │
-       ▼
-Compactação para até 48 keyframes
-       │
-       ▼
-Expressões dinâmicas de crop no FFmpeg
+       ▼  plan.json → artefato versionado no GCS
+PASSE 3 — render (autoframe_v10/render.py)
+  composição por frame em OpenCV → rawvideo → ffmpeg
+  legendas ASS + logo + títulos na mesma codificação · áudio AAC da origem
        │
        ▼
 Vídeo vertical 1080 × 1920
 ```
 
-## 1. Amostragem em duas passadas
+A separação em passes é o diferencial: o planejador enxerga o vídeo inteiro (quem fala quando, onde cada rosto estará) antes de emitir qualquer movimento de câmera.
 
-A análise acontece em duas passadas sobre o intervalo do capítulo (`trim_start` a `trim_end`):
+## 1. Passe de análise
 
-**Passada 1 — varredura barata.** A cada 0,75 segundo (máximo de 300 amostras), o worker reduz o frame, calcula a diferença média em escala de cinza em relação à amostra anterior e mede a "energia de movimento". Não há detecção facial aqui — o custo por amostra é mínimo.
+- **Vídeo**: `cv2.VideoCapture`; `fps`, dimensões e o intervalo `trim_start`–`trim_end` são lidos da fonte.
+- **Cenas**: `scenedetect` `ContentDetector` (threshold 27, cena mínima de 0,5 s). Todos os passos seguintes acontecem **dentro de cada cena**, impedindo que tracks vazem através de cortes.
+- **Áudio e VAD**: áudio mono 16 kHz extraído via ffmpeg; RMS por frame em janela de `0,15 s`; limiar de fala = máximo entre `0,005` e `0,15 × percentil 95` do RMS. Vídeos sem áudio degradam para silêncio (o restante da análise continua).
+- **Rostos**: `yolov11n-face.pt` (Ultralytics YOLO11n-face), entrada 640 px, confiança mínima `0,5`, inferência em lotes de 16 frames. Dispositivo por `resolve_device()`: `TRANSCODE_USE_GPU=1` → CUDA → MPS → CPU; `0` → CPU. `AUTOFRAME_DEVICE` força um dispositivo.
+- **Tracking**: associação gulosa por IoU (`track_iou=0,4`), tolera até `track_max_gap=10` frames sem detecção com interpolação linear das caixas e descarta tracks com menos de `track_min_len=10` frames.
+- **Locutor ativo (LR-ASD)**: modelo leve áudio-visual (0,84M parâmetros, MIT) que combina MFCC 100 fps com crops faciais 112×112 a 25 fps e produz um logit de fala por frame. Roda em CPU mesmo quando o detector usa GPU/MPS (o `max_pool3d` do PyTorch não existe em MPS).
+- **Fallback visual**: quando `|logit| < asd_low_conf=1,0`, o score é mesclado com a abertura labial medida por FaceMesh (landmarks 13/14/61/291, janela de 10 frames). MediaPipe é opcional — em Python 3.13 não há wheel e o fallback simplesmente pontua zero.
+- **Score de fala**: `speak = w·sigmoid(logit) + (1−w)·(0,5·sigmoid(logit) + 0,5·visual)`, com `w = |logit|/asd_low_conf` truncado em [0,1]; frames fora de fala (VAD) recebem portão ×0,3.
 
-**Segmentos ativos.** Amostras com movimento acima de `0,015` (diferença média normalizada 0–1) formam segmentos ativos, expandidos em 1 segundo para cada lado e unidos quando a lacuna entre eles é menor que 1 segundo. Cortes de cena também geram movimento, portanto ficam cobertos.
+Saída (`*_analysis.json`): `fps`, `width`, `height`, `scenes`, `tracks` (frames, boxes, `asd_logit`, `visual`, `speak`), `audio_rms`, `vad`.
 
-**Passada 2 — detecção.** O orçamento de 240 frames de detecção é distribuído assim:
+## 2. Passe de planejamento
 
-- trechos ativos: amostras a cada **0,18 segundo**;
-- trechos estáticos: amostras a cada **1,1 segundo**;
-- se o total ultrapassa 240, as amostras são afinadas uniformemente.
+Doutrina: **não mova a menos que precise**.
 
-Na prática, capítulos de notícia passam a maior parte do tempo em plano fixo: a detecção densa fica concentrada onde algo acontece, sem aumentar o custo total.
+- **Seleção do alvo**: por frame, o track com maior `speak`; um novo falante só assume se ficar acima de `speak_thr=0,5` por `confirm_sec=0,4 s` e o plano atual já durar `min_shot_sec=1,5 s`. Trechos de alvo com menos de 0,3 s são absorvidos pelo segmento vizinho (sem flicker).
+- **Zoom**: `crop_h = face_h × 3,2`, limitado entre `0,55 × altura da fonte` (evita pixelar) e a altura total; a largura segue a proporção 9:16 de saída. O zoom é **fixo por segmento** — nada de respiração.
+- **Modos por segmento**:
+  - `static`: centro estável (desvio < `1,2%` da largura) → crop congelado;
+  - `pan`: deriva suave entre dois patamares próximos;
+  - `track`: o rosto se desloca e o crop acompanha com zona morta (`2%`) + suavização gaussiana bidirecional (`σ=0,35 s`);
+  - `nobody`: sem falante → crop central (`no_face_mode=center`).
+- **Corte vs. pan entre falantes**: distância acima de `20%` da largura → corte seco; próximos e coexistentes → pan de `0,45 s` com easing cossenoidal.
+- **Composição**: centro do rosto a `42%` da altura do crop (`headroom`) — regra dos terços adaptativa.
+- **Split**: o planejador sabe produzir `layout=split` para diálogos (`multi_mode=split`), mas o worker fixa `multi_mode=cut` nesta fase — o modo manual `split_stack` continua intacto para dois falantes.
 
-## 2. Resolução de análise
+Saída (`*_plan.json`): por frame — `layout`, `crop=[x,y,w,h]` em coordenadas da fonte, `track`, `mode`, `scene`, `trans` — mais a lista de segmentos com suas transições.
 
-Frames com largura superior a 640 pixels são reduzidos proporcionalmente antes da detecção. As coordenadas detectadas (rostos e landmarks) são convertidas de volta para a resolução original informada em `video_resolution`, preservando a precisão geométrica do crop.
+## 3. Passe de composição
 
-## 3. Detecção facial e landmarks
+Cada frame da fonte é recortado conforme o plano (`LANCZOS4` para 1080×1920) e enviado como `rawvideo bgr24` a um único processo ffmpeg, que aplica na mesma codificação:
 
-O modelo continua sendo o YuNet do OpenCV Zoo:
+- legendas ASS (`write_ass_captions`, tempos relativos ao recorte);
+- logo (frame único, `overlay` com `eof_action=repeat` — sem `-loop 1`);
+- textos de título (`drawtext`, com centralização na caixa quando `max_width` definido);
+- áudio da fonte em AAC 160 kbps com `-shortest`;
+- encoder por `resolve_encoder()`: `h264_nvenc` quando CUDA disponível, `h264_videotoolbox` em macOS local, `libx264` como padrão — com **uma retomada automática para libx264** se o encoder acelerado falhar;
+- saída `yuv420p`, `+faststart`.
 
-```text
-vertical_render_function/models/face_detection_yunet_2023mar.onnx
-```
+## 4. Reuso exato do plano entre rascunho e final
 
-Configuração: confiança mínima `0,65`, limiar de NMS `0,3`, rostos menores que 18 × 18 pixels ignorados. Licença MIT preservada em `vertical_render_function/models/LICENSE`.
-
-Além da caixa e da confiança, a estratégia atual consome os **5 landmarks** do YuNet (olho direito, olho esquerdo, nariz e cantos da boca). Eles alimentam duas funções novas:
-
-- **direção do olhar**: a posição do nariz em relação ao ponto médio dos olhos indica para onde a pessoa vira o rosto;
-- **região da boca**: base para medir a atividade labial (detecção do locutor).
-
-## 4. Seleção do foco principal
-
-### Pesos clássicos (sem sinal de fala)
-
-Quando não há medição de atividade labial, a seleção usa os pesos originais:
-
-- área do rosto: 48% do score;
-- continuidade em relação ao foco anterior: 25%;
-- confiança da detecção: 17%;
-- proximidade do centro da imagem: 10%.
-
-### Pesos de locutor (com sinal de fala)
-
-Quando há medição labial, o score passa a privilegiar quem fala:
-
-- atividade labial normalizada: 30%;
-- área do rosto: 28%;
-- continuidade: 22%;
-- confiança: 12%;
-- proximidade do centro: 8%.
-
-### Histerese do locutor
-
-O locutor atual só perde o foco quando um desafiante sustenta um score **1,2× maior** por pelo menos **0,6 segundo**. Detecções isoladas ou picos curtos de fala não trocam o enquadramento. Quando o locutor atual desaparece do frame, o melhor candidato assume imediatamente.
-
-### Rostos próximos
-
-Quando dois ou mais rostos cabem juntos dentro de aproximadamente 82% da largura e 72% da altura do crop, o foco é colocado no centro do grupo — uma conversa próxima não é cortada.
-
-## 5. Composição vertical
-
-Três regras substituem o antigo deslocamento fixo de 12%:
-
-1. **Respiro de cabeça**: o centro do rosto é posicionado a **40% da altura do crop** (acima do centro), preservando espaço para ombros e corpo.
-2. **Margem de segurança**: o foco é ajustado para que a caixa do rosto mais 15% de margem fique sempre dentro da janela do crop, quando a fonte permite. Isso evita cortar testa ou queixo em posições extremas.
-3. **Viés de olhar**: o foco horizontal se inclina até **8% da largura do crop** na direção para onde a pessoa olha (nariz deslocado em relação ao ponto médio dos olhos), antecipando a direção da atenção.
-
-Para fontes 16:9 o crop ocupa toda a altura da fonte; nesse caso o eixo Y fica fixo no centro e apenas o eixo X se move.
-
-## 6. Estabilidade e suavização adaptativa
-
-A estratégia atual substitui a suavização fixa por um perfil que reage à velocidade e à confiança:
-
-**Velocidade observada.** A velocidade do alvo é estimada a partir dos **alvos observados** (janela de 1,2 segundo), não do crop estabilizado. Medir o crop já atrasado subestimava a velocidade e mantinha o sistema permanentemente lento.
-
-**Previsão (lead).** O alvo recebe um adiantamento de `velocidade × 0,3 s` (limitado a 25% da largura do crop). A câmera passa a *antecipar* o movimento em vez de persegui-lo.
-
-**Janela de média adaptativa.** Os alvos observados são acumulados em média móvel antes da suavização:
-
-- movimento lento (abaixo de 25% da largura do crop por segundo): janela de **5 segundos** — estabilidade máxima;
-- movimento rápido: janela de **1 segundo** — a média longa faria o crop ficar para trás.
-
-**Zona morta adaptativa.** Deslocamentos menores que **15%** da largura do crop (mínimo de 8 pixels) não geram movimento; com o sujeito em movimento rápido, a zona cai para **6%**, permitindo que o crop acompanhe.
-
-**Ganho adaptativo.** Ao superar a zona morta, o algoritmo aplica:
-
-- 34% da diferença em regime normal;
-- 55% com o sujeito em movimento rápido;
-- 62% em saltos grandes (acima de 90% da largura do crop) ou mudanças de cena;
-- com confiança de detecção abaixo de `0,75` (tracker corporal ou fluxo óptico), o ganho é multiplicado por 0,6 — o crop fica mais pesado quando a referência é menos confiável.
-
-**Emissão de keyframes.** Um novo keyframe é criado quando: é o primeiro do capítulo, ocorre mudança de cena, ou o foco estabilizado se afasta da zona morta correspondente do último keyframe emitido.
-
-## 7. Ausência temporária de rosto
-
-Quando o rosto desaparece, duas camadas mantêm o enquadramento:
-
-**Fluxo óptico (Lucas-Kanade).** Entre amostras consecutivas com até 0,6 segundo de intervalo, os cantos da caixa facial e os landmarks são rastreados com `calcOpticalFlowPyrLK`, com verificação direta e reversa (erro retroativo < 2,5 px) e deslocamento mediano. É rápido, não deriva e cobre piscadas, viradas curtas e borrões.
-
-**Tracker corporal (CSRT, com reserva MIL).** Para lacunas maiores, o último frame facial semeia um tracker sobre a região expandida de cabeça, ombros e torso (limitada a 72% da largura e 78% da altura do frame analisado). O worker usa `TrackerCSRT` quando a build do OpenCV oferece (a imagem de produção usa `opencv-contrib-python-headless`) e recua para `TrackerMIL` caso contrário. Cada amostra rastreada com sucesso atualiza a semente, evitando que um tracker antigo seja reaproveitado.
-
-**Retenção e fallback.** A última posição confirmada é mantida por até **3 segundos**; após isso, o corte volta suavemente ao centro do vídeo.
-
-## 8. Mudanças de cena
-
-Cada amostra gera um histograma de 32 níveis de cinza e uma medida de pixels alterados (diferença em resolução reduzida):
-
-- **corte seco**: correlação de histograma abaixo de `0,25` **ou** mais de 38% dos pixels alterados;
-- **fade**: correlação sustentada entre `0,25` e `0,60` por 3 amostras consecutivas.
-
-Em qualquer um dos casos, o estado de rastreamento (locutor, candidato, semente, tracker, fluxo) é descartado para impedir que uma identidade da cena anterior contamine a seguinte. Diferente das versões anteriores, **o foco não salta para o centro**: um keyframe é emitido no limite da cena com o foco anterior, e o novo foco entra suavemente — o easing de 2 segundos do renderer costura a transição entre as cenas.
-
-## 9. Compactação dos keyframes
-
-A análise pode produzir dezenas de posições. Inserir todas no filtro `crop` cria expressões profundamente aninhadas. Antes da renderização, a trajetória é compactada para **no máximo 48 keyframes** (era 24 na versão 1).
-
-O algoritmo remove iterativamente o ponto cuja ausência produz o menor desvio em relação à interpolação entre seus vizinhos, preservando primeiro e último pontos, mudanças grandes, cortes de cena e curvas relevantes. A compactação também é aplicada a keyframes antigos recuperados do Firestore.
-
-## 10. Geração do crop no FFmpeg
-
-Para uma fonte horizontal, o crop usa toda a altura disponível e calcula a largura correspondente à proporção 9:16. Exemplo para uma fonte 640 × 360:
+O plano é grande demais para o Firestore (dezenas de milhares de frames). Ele é serializado como JSON gzipado e publicado no bucket de saída em:
 
 ```text
-crop: 202 × 360
-saída: 1080 × 1920
+{video_id}/chapters/{chapter_id}/autoframe/v10/{fingerprint}.plan.json.gz
 ```
 
-As posições focais viram expressões temporais para X e Y. Cada keyframe contribui com **um único condicional**: o valor permanece no patamar anterior até a janela de transição abrir e então faz o easing cossenoidal até o alvo — um `max(0, min(...))` embute a fase de espera na própria curva. Essa forma compacta permite dobrar o orçamento de keyframes sem estourar o parser do FFmpeg. Os valores são limitados para que o crop nunca saia das dimensões da fonte.
+O **fingerprint** (SHA-256) cobre tudo que determina o plano: caminho e **generation** do objeto de origem, `trim_start`/`trim_end`, dimensões, todos os parâmetros de configuração que afetam a trajetória e os checksums dos modelos YOLO/LR-ASD. O worker responde `camera_plan_gcs_path` + `camera_plan_fingerprint`; o app os grava em `chapter.render_options` e os devolve no render final.
 
-Depois do crop e do redimensionamento, o pipeline aplica legendas ASS, logo, textos de marca, codificação H.264/AAC e `faststart`.
+- fingerprint igual → o final **reutiliza o plano do rascunho sem re-analisar** (o vídeo final é pixel-identico em enquadramento ao que foi aprovado);
+- limites do capítulo alterados, fonte substituída, configuração ou modelo novo → fingerprint diverge → análise regenerada automaticamente;
+- artefato ausente/corrompido → regeneração com log de aviso;
+- renders antigos da estratégia v3 (`focal_strategy_version=3`) não alimentam a v10 — e vice-versa: o app só envia `automatic_focal_points` quando a versão gravada é 3.
 
-## 11. Persistência e controle de versão
+`AUTOFRAME_ENGINE=legacy` devolve o comportamento v3 completo (inclusive reuso de `automatic_focal_points`) como caminho de rollback.
 
-Os pontos focais calculados durante o rascunho são devolvidos pelo worker e armazenados em:
+## 5. Fallbacks
 
-```text
-render_options.automatic_focal_points
-render_options.focal_strategy_version
-```
+- falha em qualquer estágio v10 (modelo ausente, vídeo ilegível, análise/planejamento quebrado) → **crop central determinístico** pelo renderer existente — nunca o detector antigo em silêncio;
+- fonte sem áudio → ASD/VAD operam sobre silêncio e a seleção recai para o maior rosto;
+- MediaPipe ausente → fallback visual zerado, LR-ASD decide sozinho;
+- encoder acelerado falha → repetição única com `libx264`;
+- `multi_mode` sempre `cut` e `no_face_mode` sempre `center` nesta fase.
 
-O render final reutiliza esses pontos **apenas quando a versão da estratégia coincide** (`FOCAL_STRATEGY_VERSION` no worker e em `app/config.py`). Ao evoluir o algoritmo, aumente a versão nos dois lugares: capítulos com pontos antigos são reanalisados no próximo render em vez de reaproveitar trajetórias obsoletas.
+## 6. Requisitos de runtime
 
-A análise é executada automaticamente nestes momentos:
-
-- **capítulo criado** (sugerido ou adicionado manualmente): o rascunho é renderizado com os limites atuais;
-- **limites alterados e salvos**: um novo rascunho é disparado para o recorte acompanhar os novos limites;
-- **render final**: reutiliza os pontos do rascunho quando a versão coincide.
-
-Quando dois renders do mesmo capítulo estão em voo (por exemplo, o rascunho original ainda em processamento depois de uma edição de limites), apenas o mais recente atualiza os campos visíveis do capítulo; o render superado é registrado no próprio documento de render e ignorado.
-
-## 12. Fallbacks
-
-O recorte central é usado quando:
-
-- o modelo YuNet não está disponível;
-- o vídeo não pode ser aberto para análise;
-- nenhuma face é encontrada e a retenção expira;
-- a análise lança uma exceção;
-- não existem keyframes automáticos válidos.
-
-Uma falha na detecção nunca impede a renderização do capítulo.
-
-## Avaliação
-
-`vertical_render_function/tests/test_focal_quality.py` contém o harness de qualidade: testes unitários das primitivas (fluxo óptico, composição, locutor, plano de amostragem) e um clip sintético sem rostos verificando que a trajetória recentraliza após a janela de retenção.
-
-Rode com `PYTHONPATH=. ../.venv/bin/python -m pytest tests/test_focal_quality.py` a partir de `vertical_render_function/`.
-
-## Modo automático com duas pessoas planejado
-
-A evolução recomendada continua sendo um terceiro modo:
-
-```text
-auto_split
-```
-
-Na interface: **Foco automático em uma pessoa**, **Duas pessoas automáticas** e **Duas âncoras manuais**.
-
-### Comportamento proposto de `auto_split`
-
-1. detectar e manter IDs persistentes para as pessoas visíveis;
-2. selecionar as duas tracks mais estáveis e relevantes;
-3. atribuir uma identidade ao quadro superior e outra ao inferior, sem inverter quando cruzarem posições;
-4. gerar trajetórias independentes para `keyframes_top` e `keyframes_bottom`;
-5. rastrear o corpo quando um dos rostos desaparecer;
-6. compactar cada trajetória separadamente;
-7. usar o renderer `split_stack` existente para compor o resultado.
-
-A prioridade de seleção considera duração da track, área média, confiança acumulada, estabilidade e presença ao longo do capítulo. Com apenas uma pessoa disponível por longos períodos, a política (manter composição dupla com plano geral ou solicitar revisão humana) deve ser explícita.
+- pacote `vertical_render_function/autoframe_v10/` + `requirements-v10.txt`;
+- modelos via **Git LFS**: `models/yolov11n-face.pt` (GPL-3.0, Ultralytics AGPL-3.0) e `third_party/LR-ASD/weight/finetuning_TalkSet.model` (MIT, commit `1b6dcd2`); checksums são validados no build da imagem e em `THIRD_PARTY_NOTICES.md`;
+- CPU pura funciona, mas a análise roda YOLO em **todos os frames** — para capítulos longos, `TRANSCODE_USE_GPU=1` (L4 no Cloud Run) é o caminho dimensionado;
+- `AUTOFRAME_ENGINE=v10|legacy` escolhe o engine; `AUTOFRAME_DEVICE`/`AUTOFRAME_ENCODER` permitem overrides manuais.
 
 ## Limitações atuais
 
-- o bloqueio de identidade usa proximidade e continuidade, não reconhecimento biométrico;
-- a detecção de locutor é feita por movimento labial aparente; cortes rápidos entre falantes ou bocas pouco visíveis podem confundir;
-- o tracker corporal (CSRT/MIL) pode derivar em oclusões longas ou movimentos muito rápidos;
-- `split_stack` ainda depende de âncoras manuais;
-- reflexos, telas e fotografias podem ser reconhecidos como rostos;
-- rostos muito pequenos, ocultos ou de perfil podem não ser detectados;
-- uma falha simultânea do detector, do fluxo e do tracker mantém a última posição por no máximo dez segundos.
+- a associação por IoU não é reconhecimento biométrico — rostos parecidos podem trocar de identidade em reentradas;
+- LR-ASD depende de sincronia áudio-vídeo razoável; sem áudio a seleção recai para tamanho do rosto;
+- o split automático de diálogo existe no planejador, mas ainda não é exposto (`multi_mode=cut` fixo);
+- rostos muito pequenos, de perfil ou ocluídos podem escapar do detector;
+- a análise processa cada frame do capítulo — capítulos muito longos em CPU podem aproximar-se do timeout do worker (3600 s).
 
-## Custos operacionais
+## Avaliação
 
-A detecção não usa APIs pagas; o custo adicional é o tempo de CPU do worker. Controles:
-
-- varredura da passada 1 sem detecção facial (redimensionamento + diferença de cinza);
-- detecção densa apenas em segmentos ativos, com orçamento global de 240 frames;
-- análise em largura máxima de 640 pixels;
-- fluxo óptico esparso (barato) como primeira camada de rastreamento;
-- reutilização dos keyframes no render final, com controle de versão;
-- compactação para no máximo 48 keyframes.
+`vertical_render_function/tests/test_autoframe_v10.py` cobre fingerprint/artefatos, histerese do falante, modos de câmera, fallback central, composição, fallback de encoder, fonte sem áudio e o roteamento do worker — sem exigir os modelos ML para a maioria dos testes.
 
 ## Arquivos relacionados
 
 ```text
-vertical_render_function/face_detection.py
-vertical_render_function/renderer.py
-vertical_render_function/main.py
-vertical_render_function/models/face_detection_yunet_2023mar.onnx
-vertical_render_function/tests/test_face_detection.py
-vertical_render_function/tests/test_focal_quality.py
-vertical_render_function/tests/test_renderer.py
-vertical_render_function/tests/test_ffmpeg_integration.py
-app/config.py
-app/models.py
-app/services/processing.py
-app/templates/video_detail.html
-```
-
-## Resumo do comportamento atual
-
-```text
-Varredura barata localiza segmentos ativos
-        ↓
-Detecção densa com YuNet apenas onde há movimento
-        ↓
-Atividade labial escolhe o locutor (histerese de 0,6 s a 1,2×)
-        ↓
-Grupos próximos viram um único foco
-        ↓
-Composição: respiro de cabeça a 40%, margem de 15%, viés de olhar
-        ↓
-Fluxo óptico cobre ausências curtas; CSRT/MIL cobre as longas
-        ↓
-Manter a última posição por 3 s sem rosto e recentralizar
-        ↓
-Velocidade prevê o alvo (+0,3 s) e adapta média, zona morta e ganho
-        ↓
-Cortes e fades emitem keyframe e costuram a transição
-        ↓
-Compactar trajetória para até 48 keyframes
-        ↓
-Interpolar crop no FFmpeg com easing cossenoidal
-        ↓
-Persistir com versão da estratégia e reutilizar no render final
+vertical_render_function/autoframe_v10/{config,models,analyze,plan,render,artifacts}.py
+vertical_render_function/third_party/LR-ASD/         (MIT, commit 1b6dcd2)
+vertical_render_function/models/yolov11n-face.pt     (Git LFS)
+vertical_render_function/models/face_detection_yunet_2023mar.onnx  (legado v3)
+vertical_render_function/{main,renderer}.py
+vertical_render_function/face_detection.py           (engine legado / rollback)
+vertical_render_function/face_detection_v_10/        (protótipo original + README)
+vertical_render_function/requirements-v10.txt
+vertical_render_function/tests/test_autoframe_v10.py
+app/{config,models}.py · app/services/processing.py
 ```

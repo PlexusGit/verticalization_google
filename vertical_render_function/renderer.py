@@ -44,6 +44,10 @@ class RenderSpec:
     caption_style: Mapping[str, Any] = dataclasses.field(default_factory=dict)
     logo: Mapping[str, Any] | None = None
     text_overlays: tuple[Mapping[str, Any], ...] = ()
+    # v10 camera-plan artifact (GCS gzip JSON) persisted from the draft render
+    # so final renders reuse the exact approved framing instead of re-analyzing.
+    camera_plan_gcs_path: str = ""
+    camera_plan_fingerprint: str = ""
 
     @property
     def duration(self) -> float:
@@ -69,6 +73,20 @@ def _gcs_path(value: Any, name: str) -> str:
     if "\x00" in value or value.startswith(("/", "file:")) or ".." in value.split("/"):
         raise ValidationError(f"{name} is not a safe GCS path")
     return value
+
+
+def _optional_gcs_path(value: Any, name: str) -> str:
+    if value is None or value == "":
+        return ""
+    return _gcs_path(value, name)
+
+
+def _optional_fingerprint(value: Any) -> str:
+    if value is None or value == "":
+        return ""
+    if not isinstance(value, str) or len(value) > 128 or not re.fullmatch(r"[0-9a-fA-F]+", value):
+        raise ValidationError("camera_plan_fingerprint must be a hex string")
+    return value.lower()
 
 
 def _keyframes(raw: Any, name: str, maximum: int = MAX_KEYFRAMES) -> tuple[dict[str, float], ...]:
@@ -153,6 +171,8 @@ def validate_request(payload: Any) -> RenderSpec:
         caption_style=style,
         logo=logo,
         text_overlays=tuple(overlays),
+        camera_plan_gcs_path=_optional_gcs_path(payload.get("camera_plan_gcs_path"), "camera_plan_gcs_path"),
+        camera_plan_fingerprint=_optional_fingerprint(payload.get("camera_plan_fingerprint")),
     )
 
 
@@ -301,7 +321,20 @@ def build_video_filter(spec: RenderSpec, ass_path: str | None, logo_input_index:
             parts.append(f"[0:v]crop={crop_w}:{crop_h}:'{safe_x}':'{safe_y}',scale={OUTPUT_WIDTH}:960[v{name}]")
         filters = [*parts, "[vtop][vbottom]vstack=inputs=2[v0]"]
 
-    current = "v0"
+    overlay_filters, current = build_overlay_filters(spec, "v0", ass_path, logo_input_index)
+    filters.extend(overlay_filters)
+    return ";".join(filters), current
+
+
+def build_overlay_filters(spec: RenderSpec, current: str, ass_path: str | None, logo_input_index: int | None) -> tuple[list[str], str]:
+    """Append captions, logo, and text overlays to the ``current`` label.
+
+    Shared by the ffmpeg filter-graph renderer and the v10 compositor, whose
+    per-frame crops are piped to ffmpeg as rawvideo and receive the identical
+    overlay chain in the same encode.  ``logo_input_index`` is the ffmpeg input
+    carrying the (single-frame) logo image, or ``None`` when absent.
+    """
+    filters: list[str] = []
     if ass_path:
         escaped_path = ass_path.replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
         filters.append(f"[{current}]subtitles='{escaped_path}'[vcap]")
@@ -341,7 +374,7 @@ def build_video_filter(spec: RenderSpec, ass_path: str | None, logo_input_index:
         label = f"vtext{index}"
         filters.append(f"[{current}]drawtext=text='{text}':fontsize={size}:fontcolor={color}@{opacity:g}:x={x}:y={y}[{label}]")
         current = label
-    return ";".join(filters), current
+    return filters, current
 
 
 def _ass_time(seconds: float) -> str:

@@ -10,7 +10,7 @@ A interface está em português brasileiro, é responsiva e usa somente a marca 
 - Normalização H.264/AAC em Cloud Run, com NVIDIA L4/NVENC opcional e fallback para CPU.
 - Transcrição `pt-BR` com Speech-to-Text v2 / Chirp 3 ou SRT fornecido pelo usuário.
 - Sugestão de capítulos e ganchos com saída estruturada do Gemini.
-- Rascunho vertical automático com detecção facial local, rastreamento suave e fallback central.
+- Rascunho vertical automático com pipeline autoframe v10: detecção facial YOLO local, locutor ativo por áudio-vídeo (LR-ASD) e câmera virtual planejada em três passes.
 - Editor de capítulos, limites, legendas estáticas, logo e texto de marca.
 - Templates reutilizáveis de logo e título, selecionáveis por capítulo antes da aprovação.
 - Reenquadramento manual no modelo RPP: duas áreas independentes, empilhadas, com quadros-chave.
@@ -18,7 +18,7 @@ A interface está em português brasileiro, é responsiva e usa somente a marca 
 - Login Google com allowlist de e-mails no Firestore e API key para automação.
 - Funções Pub/Sub opcionais para importar objetos de GCS e S3.
 
-> **Sobre active speaker tracking:** o enquadramento automático detecta e acompanha o rosto principal, mas não afirma identificar quem está falando. A seleção prioriza continuidade, tamanho, confiança e centralidade. Atividade labial ou diarização podem ser combinadas futuramente.
+> **Sobre active speaker tracking:** o enquadramento automático (estratégia v10, `autodetect.md`) identifica o locutor ativo com o modelo áudio-visual LR-ASD — MFCC + crops faciais — com histerese de 0,4 s e plano mínimo de 1,5 s antes de trocar. O plano de câmera do rascunho é persistido no GCS e reutilizado exato no render final.
 
 ## Arquitetura
 
@@ -153,7 +153,8 @@ Preencha pelo menos:
 | `SECRET_KEY` | segredo longo para assinar sessões |
 | `SECURITY_TOKEN` | token longo para app, workers e importadores |
 | `GEMINI_API_KEY` | chave da Gemini API |
-| `TRANSCODE_USE_GPU` | `1` para L4 ou `0` para CPU |
+| `TRANSCODE_USE_GPU` | `1` para L4 ou `0` para CPU (transcode **e** render vertical) |
+| `AUTOFRAME_ENGINE` | `legacy` (padrão de rollout) ou `v10` para o enquadramento automático |
 
 Gere segredos locais, por exemplo:
 

@@ -311,6 +311,18 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
         raise KeyError(f"capítulo {chapter_id} não encontrado")
     chapter = snapshot.to_dict() or {}
     kind = "final" if final else "draft"
+    # Carry the chapter's stored v10 camera plan when the request did not
+    # include one (e.g. the editor saved only caption/branding options). The
+    # worker revalidates the fingerprint, so a stale plan is never reused.
+    if not options.camera_plan_gcs_path:
+        stored = chapter.get("render_options") or {}
+        update = {
+            "camera_plan_gcs_path": stored.get("camera_plan_gcs_path") or "",
+            "camera_plan_fingerprint": stored.get("camera_plan_fingerprint") or "",
+        }
+        if update["camera_plan_gcs_path"]:
+            update["focal_strategy_version"] = stored.get("focal_strategy_version") or 0
+        options = options.model_copy(update=update)
     render_id = f"{kind}_{uuid.uuid4().hex[:10]}"
     target = f"{video_id}/chapters/{chapter_id}/{render_id}.mp4"
     render_ref = chapter_ref.collection("renders").document(render_id)
@@ -387,6 +399,11 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
             }
         )
     caption_style = persisted_options.get("caption_style") or {}
+    # Framing artifacts are only reused when produced by the strategy that
+    # understands them: v3 focal keyframes for the legacy engine, v10 camera
+    # plans for the current engine. Anything else makes the worker re-analyze.
+    stored_version = persisted_options.get("focal_strategy_version")
+    reusable_plan = stored_version == settings.FOCAL_STRATEGY_VERSION
     payload = {
         "video_id": video_id,
         "chapter_id": chapter_id,
@@ -399,13 +416,13 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
         "mode": persisted_options.get("layout_mode", "center_crop"),
         "keyframes_top": persisted_options.get("keyframes_top") or [],
         "keyframes_bottom": persisted_options.get("keyframes_bottom") or [],
-        # Cached focal points are only reused when produced by the current
-        # strategy; otherwise the worker re-analyzes with the latest logic.
         "automatic_focal_points": (
             persisted_options.get("automatic_focal_points") or []
         )
-        if persisted_options.get("focal_strategy_version") == settings.FOCAL_STRATEGY_VERSION
+        if stored_version == settings.LEGACY_FOCAL_STRATEGY_VERSION
         else [],
+        "camera_plan_gcs_path": (persisted_options.get("camera_plan_gcs_path") or "") if reusable_plan else "",
+        "camera_plan_fingerprint": (persisted_options.get("camera_plan_fingerprint") or "") if reusable_plan else "",
         "captions": captions,
         "caption_style": {
             "font": caption_style.get("font", settings.DEFAULT_CAPTION_FONT),
@@ -448,10 +465,24 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
     )
     try:
         result = vertical_render.submit(payload)
-        detected_points = result.get("automatic_focal_points") or persisted_options.get("automatic_focal_points") or []
+        # Persist the worker's framing artifacts so the next render (typically
+        # the final) can reuse them. The strategy version is always recorded —
+        # even without points/plans — so stale artifacts from older strategies
+        # are never treated as reusable.
+        result_version = result.get("focal_strategy_version") or 0
+        detected_points = result.get("automatic_focal_points") or []
+        # Only the legacy engine produces focal keyframes. Keep the previously
+        # stored points only when the render actually ran that engine — storing
+        # v3 points under the v10 version would mislabel stale trajectories.
+        if not detected_points and result_version == settings.LEGACY_FOCAL_STRATEGY_VERSION:
+            detected_points = persisted_options.get("automatic_focal_points") or []
         if detected_points:
             persisted_options["automatic_focal_points"] = detected_points
-            persisted_options["focal_strategy_version"] = result.get("focal_strategy_version") or settings.FOCAL_STRATEGY_VERSION
+        elif result_version != settings.LEGACY_FOCAL_STRATEGY_VERSION:
+            persisted_options.pop("automatic_focal_points", None)
+        persisted_options["focal_strategy_version"] = result_version
+        persisted_options["camera_plan_gcs_path"] = result.get("camera_plan_gcs_path") or ""
+        persisted_options["camera_plan_fingerprint"] = result.get("camera_plan_fingerprint") or ""
         output_path = result.get("gcs_path") or result.get("output_gcs_path") or target
         managed_prefix = f"gs://{settings.BUCKET_NAME}/"
         if output_path.startswith(managed_prefix):

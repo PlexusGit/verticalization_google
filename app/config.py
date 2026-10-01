@@ -46,9 +46,12 @@ class Settings(BaseSettings):
     OUTPUT_HEIGHT: int = 1920
     DEFAULT_CAPTION_FONT: str = "DejaVu Sans"
     DEFAULT_CAPTION_FONT_SIZE: int = 54
-    # Must match FOCAL_STRATEGY_VERSION in vertical_render_function/face_detection.py;
-    # cached focal points from older strategies are re-analyzed on the next render.
-    FOCAL_STRATEGY_VERSION: int = 3
+    # Current autoframe strategy: 10 = v10 camera-plan artifacts (see
+    # autoframe_v10/artifacts.py). LEGACY_FOCAL_STRATEGY_VERSION (3 = YuNet
+    # focal keyframes) gates reuse of automatic_focal_points so renders on the
+    # legacy engine still reuse their cached trajectories during migration.
+    FOCAL_STRATEGY_VERSION: int = 10
+    LEGACY_FOCAL_STRATEGY_VERSION: int = 3
 
     SERVICE_NAME: str = "plexus-vertical-cuts"
 

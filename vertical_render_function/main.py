@@ -16,7 +16,17 @@ import functions_framework
 from google.cloud import firestore, storage
 
 from face_detection import FOCAL_STRATEGY_VERSION, analyze_focal_points
-from renderer import RenderSpec, ValidationError, compact_keyframes, render, validate_request, write_ass_captions
+from renderer import (
+    OUTPUT_HEIGHT,
+    OUTPUT_WIDTH,
+    RenderSpec,
+    ValidationError,
+    build_overlay_filters,
+    compact_keyframes,
+    render,
+    validate_request,
+    write_ass_captions,
+)
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -25,6 +35,10 @@ PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
 DEFAULT_BUCKET = os.getenv("BUCKET_NAME", "")
 VIDEOS_COLLECTION = os.getenv("COLLECTION_VIDEOS", "vertical_cuts_videos")
 API_KEY = os.getenv("API_KEY") or os.getenv("SECURITY_TOKEN", "")
+# "v10" enables the offline analyze->plan->render autoframe pipeline for
+# center_crop requests; "legacy" keeps the YuNet focal-keyframe path as the
+# immediate rollback option. Manual split_stack always uses the legacy path.
+AUTOFRAME_ENGINE = os.getenv("AUTOFRAME_ENGINE", "legacy").strip().lower()
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,200}$")
 _storage_client: storage.Client | None = None
 _firestore_client: firestore.Client | None = None
@@ -96,14 +110,30 @@ def _cors_headers() -> dict[str, str]:
     return {"Access-Control-Allow-Origin": "*", "Content-Type": "application/json"}
 
 
-def _download(gcs_path: str, destination: str) -> None:
+def _download(gcs_path: str, destination: str) -> str | None:
+    """Download a GCS object; returns its generation for plan fingerprinting."""
     bucket, blob = split_gcs_path(gcs_path)
-    storage_client().bucket(bucket).blob(blob).download_to_filename(destination)
+    obj = storage_client().bucket(bucket).get_blob(blob)
+    if obj is None:
+        raise RuntimeError(f"GCS object not found: {gcs_path}")
+    obj.download_to_filename(destination)
+    return None if obj.generation is None else str(obj.generation)
+
+
+def _download_bytes(gcs_path: str) -> bytes:
+    bucket, blob = split_gcs_path(gcs_path)
+    return storage_client().bucket(bucket).blob(blob).download_as_bytes()
 
 
 def _upload(gcs_path: str, source: str) -> str:
     bucket, blob = split_gcs_path(gcs_path)
     storage_client().bucket(bucket).blob(blob).upload_from_filename(source, content_type="video/mp4", timeout=600)
+    return f"gs://{bucket}/{blob}"
+
+
+def _upload_bytes(gcs_path: str, data: bytes, content_type: str) -> str:
+    bucket, blob = split_gcs_path(gcs_path)
+    storage_client().bucket(bucket).blob(blob).upload_from_string(data, content_type=content_type)
     return f"gs://{bucket}/{blob}"
 
 
@@ -124,6 +154,107 @@ def _add_automatic_focus(spec: RenderSpec, source_path: str) -> RenderSpec:
     except Exception:
         logger.exception("A análise facial falhou; usando recorte central")
         return spec
+
+
+def _render_with_v10(
+    spec: RenderSpec,
+    source_path: str,
+    output_path: str,
+    workdir: str,
+    *,
+    source_generation: str | None,
+    video_id: str,
+    chapter_id: str | None,
+    ass_path: str | None,
+    logo_path: str | None,
+) -> dict[str, Any]:
+    """Analyze, plan, and render an automatic center_crop chapter with v10.
+
+    Returns response extras (plan artifact location and stats).  Raises on any
+    failure; the caller falls back to a deterministic central crop.
+    """
+    from autoframe_v10 import artifacts
+    from autoframe_v10.analyze import analyze as v10_analyze
+    from autoframe_v10.config import Config, resolve_device, resolve_encoder
+    from autoframe_v10.plan import plan as v10_plan
+    from autoframe_v10.render import render_plan
+
+    device = resolve_device()
+    cfg = Config(
+        video=source_path,
+        start=spec.trim_start,
+        duration=spec.duration,
+        workdir=workdir,
+        output_w=OUTPUT_WIDTH,
+        output_h=OUTPUT_HEIGHT,
+        device=device,
+        encoder=resolve_encoder(device),
+    )
+    logger.info("v10 autoframe device=%s encoder=%s", cfg.device, cfg.encoder)
+    expected_fp = artifacts.plan_fingerprint(
+        cfg,
+        source_gcs_path=spec.source_gcs_path,
+        source_generation=source_generation,
+        trim_start=spec.trim_start,
+        trim_end=spec.trim_end,
+        source_width=spec.source_width,
+        source_height=spec.source_height,
+    )
+
+    plan_doc = None
+    if spec.camera_plan_gcs_path and spec.camera_plan_fingerprint:
+        if spec.camera_plan_fingerprint == expected_fp:
+            try:
+                plan_doc = artifacts.loads_plan(_download_bytes(spec.camera_plan_gcs_path))
+                if plan_doc.get("fingerprint") != expected_fp:
+                    logger.warning("v10 plan fingerprint interno diverge; re-analisando")
+                    plan_doc = None
+                else:
+                    logger.info("v10 reutilizando plano do rascunho %s", spec.camera_plan_gcs_path)
+            except Exception:
+                logger.exception("v10 plano reutilizável indisponível; re-analisando")
+                plan_doc = None
+        else:
+            logger.info(
+                "v10 fingerprint diverge do rascunho (%s… != %s…); re-analisando",
+                spec.camera_plan_fingerprint[:12],
+                expected_fp[:12],
+            )
+
+    artifact_uri = ""
+    analysis = None
+    if plan_doc is None:
+        analysis = v10_analyze(cfg)
+        plan_doc = v10_plan(cfg, analysis)
+        plan_doc["format"] = artifacts.PLAN_FORMAT
+        plan_doc["fingerprint"] = expected_fp
+        out_bucket, _ = split_gcs_path(spec.output_gcs_path)
+        blob_path = artifacts.artifact_blob_path(video_id, chapter_id or "chapter", expected_fp)
+        artifact_uri = _upload_bytes(f"gs://{out_bucket}/{blob_path}", artifacts.dumps_plan(plan_doc), "application/gzip")
+        logger.info("v10 plano publicado em %s", artifact_uri)
+
+    def overlay_builder(input_label: str, logo_index: int | None):
+        return build_overlay_filters(spec, input_label, ass_path, logo_index)
+
+    stats = render_plan(
+        cfg,
+        plan_doc,
+        output_path,
+        overlay_builder=overlay_builder,
+        logo_path=logo_path,
+        analysis=analysis,
+    )
+    return {
+        "camera_plan_gcs_path": artifact_uri or spec.camera_plan_gcs_path,
+        "camera_plan_fingerprint": expected_fp,
+        "autoframe_stats": {
+            "device": cfg.device,
+            "encoder": stats["encoder"],
+            "frames": stats["frames"],
+            "segments": len(plan_doc.get("segments", [])),
+            "plan_reused": analysis is None,
+        },
+    }
 
 
 @functions_framework.http
@@ -155,13 +286,14 @@ def vertical_render(request: Any):
 
     update_status(video_id, render_id, chapter_id, "PROCESSING", started_at=firestore.SERVER_TIMESTAMP, error=firestore.DELETE_FIELD)
     logger.info(
-        "Render recebido video=%s chapter=%s render=%s trecho=%.1fs–%.1fs modo=%s",
+        "Render recebido video=%s chapter=%s render=%s trecho=%.1fs–%.1fs modo=%s engine=%s",
         video_id,
         chapter_id or "-",
         render_id,
         spec.trim_start,
         spec.trim_end,
         spec.mode,
+        AUTOFRAME_ENGINE,
     )
     try:
         # TemporaryDirectory guarantees removal on success, exceptions, and client
@@ -171,17 +303,42 @@ def vertical_render(request: Any):
             output_path = str(Path(workdir) / "output.mp4")
             ass_path = str(Path(workdir) / "captions.ass") if spec.captions else None
             logo_path = str(Path(workdir) / "logo") if spec.logo else None
-            _download(spec.source_gcs_path, source_path)
-            spec = _add_automatic_focus(spec, source_path)
+            source_generation = _download(spec.source_gcs_path, source_path)
             if ass_path:
                 write_ass_captions(spec, ass_path)
             if logo_path and spec.logo:
                 _download(str(spec.logo["gcs_path"]), logo_path)
-            render(spec, source_path, output_path, ass_path=ass_path, logo_path=logo_path)
+
+            strategy_version = FOCAL_STRATEGY_VERSION
+            used_v10 = False
+            extras: dict[str, Any] = {}
+            if spec.mode == "center_crop" and AUTOFRAME_ENGINE == "v10":
+                from autoframe_v10 import AUTOFRAME_STRATEGY_VERSION
+
+                strategy_version = AUTOFRAME_STRATEGY_VERSION
+                used_v10 = True
+                try:
+                    extras = _render_with_v10(
+                        spec, source_path, output_path, workdir,
+                        source_generation=source_generation,
+                        video_id=video_id, chapter_id=chapter_id,
+                        ass_path=ass_path, logo_path=logo_path,
+                    )
+                except Exception:
+                    # Deterministic center crop — never the legacy detector —
+                    # so a v10 failure cannot silently degrade to old framing.
+                    logger.exception("v10 autoframe falhou; recorte central determinístico")
+                    spec = dataclasses.replace(spec, automatic_focal_points=())
+                    render(spec, source_path, output_path, ass_path=ass_path, logo_path=logo_path)
+            else:
+                spec = _add_automatic_focus(spec, source_path)
+                render(spec, source_path, output_path, ass_path=ass_path, logo_path=logo_path)
             output_uri = _upload(spec.output_gcs_path, output_path)
 
         update_status(video_id, render_id, chapter_id, "COMPLETED", output_gcs_path=output_uri, completed_at=firestore.SERVER_TIMESTAMP, error=firestore.DELETE_FIELD)
-        return ({"status": "COMPLETED", "video_id": video_id, "render_id": render_id, "chapter_id": chapter_id, "output_gcs_path": output_uri, "width": 1080, "height": 1920, "automatic_focal_points": list(spec.automatic_focal_points), "focal_strategy_version": FOCAL_STRATEGY_VERSION}, 200, _cors_headers())
+        # v10 returns no focal keyframes — the reusable artifact is the plan.
+        points = [] if used_v10 else list(spec.automatic_focal_points)
+        return ({"status": "COMPLETED", "video_id": video_id, "render_id": render_id, "chapter_id": chapter_id, "output_gcs_path": output_uri, "width": 1080, "height": 1920, "automatic_focal_points": points, "focal_strategy_version": strategy_version, **extras}, 200, _cors_headers())
     except ValidationError as exc:
         # Some style values are validated while assembling the filter graph.
         update_status(video_id, render_id, chapter_id, "ERROR", error=str(exc))

@@ -158,6 +158,12 @@ class RenderRequest(BaseModel):
     caption_style: CaptionStyle = Field(default_factory=CaptionStyle)
     branding: BrandingOptions = Field(default_factory=BrandingOptions)
     final: bool = False
+    # Strategy of the stored framing artifacts: 3 = legacy focal keyframes,
+    # 10 = v10 camera plan. Written back from every worker response so final
+    # renders reuse the exact draft analysis instead of re-detecting.
+    focal_strategy_version: int = 0
+    camera_plan_gcs_path: str = Field(default="", max_length=1024)
+    camera_plan_fingerprint: str = Field(default="", max_length=128)
 
 
 class ImportGCSRequest(BaseModel):
