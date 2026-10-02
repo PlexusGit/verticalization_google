@@ -4,13 +4,16 @@
 # cpu wheel index, the GPU image uses PyPI's CUDA-bundled wheels, and local
 # macOS installs use PyPI (MPS support included). See Dockerfile and README.
 #
-# ultralytics/mediapipe transitively request the non-headless opencv wheels;
+# ultralytics transitively requests the non-headless opencv wheels;
 # the Dockerfile and local setup reinstall opencv-contrib-python-headless
 # afterwards so a single cv2 build remains on disk.
 ultralytics==8.3.200
 scenedetect==0.6.7.1
 scipy==1.16.3
 python-speech-features==0.6
-# No CPython 3.13 wheels exist yet; without it the FaceMesh visual fallback is
-# disabled and LR-ASD scores drive speaker selection alone.
-mediapipe==0.10.21; python_version < "3.13"
+# mediapipe is intentionally not installed: it pins protobuf<5, which breaks
+# google-cloud-firestore/googleapis-common-protos (their generated code needs
+# protobuf>=5.26's runtime_version module). The FaceMesh visual fallback is
+# optional — models.py disables it gracefully and LR-ASD drives speaker
+# selection alone.
+# mediapipe==0.10.21; python_version < "3.13"

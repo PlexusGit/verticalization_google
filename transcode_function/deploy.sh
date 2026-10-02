@@ -48,6 +48,9 @@ GPU_ARGS=()
 if [[ "${USE_GPU}" == "1" ]]; then
   GPU_ARGS=(--gpu=1 --gpu-type=nvidia-l4 --no-gpu-zonal-redundancy)
 else
+  # --gpu=0 is required: Cloud Run deploy flags are sticky, so omitting --gpu
+  # would keep a GPU allocated by an earlier revision.
+  GPU_ARGS=(--gpu=0)
   ENV_VARS="${ENV_VARS},USE_NVENC=0"
 fi
 SERVICE_ACCOUNT_ARGS=()

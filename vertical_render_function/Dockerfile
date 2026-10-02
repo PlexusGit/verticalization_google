@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir --index-url "${TORCH_INDEX}" \
         torch==2.8.0 torchvision==0.23.0 \
     && pip install --no-cache-dir -r requirements-v10.txt
-# ultralytics/mediapipe pull the non-headless opencv wheels; force the headless
+# ultralytics pulls the non-headless opencv wheels; force the headless
 # contrib build back on so cv2 works without libGL in the container.
 RUN pip uninstall -y opencv-python opencv-python-headless opencv-contrib-python || true
 RUN pip install --no-cache-dir --force-reinstall --no-deps opencv-contrib-python-headless==4.11.0.86

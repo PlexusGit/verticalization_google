@@ -44,7 +44,7 @@ if ! gcloud artifacts repositories describe "${REPOSITORY}" --location "${REGION
   gcloud artifacts repositories create "${REPOSITORY}" --repository-format=docker --location="${REGION}" --description="GNI render workers"
 fi
 gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
-docker build --platform linux/amd64 "${BUILD_ARGS[@]}" -t "${IMAGE}" "${SCRIPT_DIR}"
+docker build --platform linux/amd64 ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"} -t "${IMAGE}" "${SCRIPT_DIR}"
 docker push "${IMAGE}"
 
 # Cloud Run GPU (NVIDIA L4) requires gen2, at least 4 CPUs, and 16 GiB.
@@ -53,6 +53,10 @@ MEMORY="8Gi"
 if [[ "${USE_GPU}" == "1" ]]; then
   GPU_ARGS=(--gpu=1 --gpu-type=nvidia-l4 --no-gpu-zonal-redundancy)
   MEMORY="16Gi"
+else
+  # --gpu=0 is required: Cloud Run deploy flags are sticky, so omitting --gpu
+  # would keep a GPU allocated by an earlier revision.
+  GPU_ARGS=(--gpu=0)
 fi
 
 gcloud run deploy "${SERVICE}" \
