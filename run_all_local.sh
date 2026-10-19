@@ -84,8 +84,8 @@ start_service() {
 start_service "transcode" "${ROOT}/transcode_function/run_local.sh"
 start_service "vertical-render" "${ROOT}/vertical_render_function/run_local.sh"
 start_service "app" "${ROOT}/run_local.sh"
-start_service "process-gcs-bucket" "${ROOT}/functions/process_gcs_bucket/run_local.sh"
-start_service "process-s3-bucket" "${ROOT}/functions/process_S3_bucket/run_local.sh"
+start_service "process-gcs-bucket" "${ROOT}/watch-folder-functions/process_gcs_bucket/run_local.sh"
+start_service "process-s3-bucket" "${ROOT}/watch-folder-functions/process_S3_bucket/run_local.sh"
 
 echo
 echo "Todos os serviços estão em execução:"

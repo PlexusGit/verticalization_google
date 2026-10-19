@@ -55,7 +55,9 @@ if [[ -n "${GCS_WATCH_BUCKET:-}" ]] && ! gcloud storage buckets describe "gs://$
   gcloud storage buckets create "gs://${GCS_WATCH_BUCKET}" --project "${PROJECT}" --location "${REGION}" --uniform-bucket-level-access
 fi
 
-for topic in "${GCS_PUBSUB_TOPIC:-plexus-vertical-cuts-gcs-imports}" "${S3_PUBSUB_TOPIC:-plexus-vertical-cuts-s3-imports}"; do
+GCS_TOPIC="${GCS_PUBSUB_TOPIC:-plexus-vertical-cuts-gcs-imports}"
+S3_TOPIC="${S3_PUBSUB_TOPIC:-plexus-vertical-cuts-s3-imports}"
+for topic in "${GCS_TOPIC}" "${S3_TOPIC}"; do
   gcloud pubsub topics describe "${topic}" --project "${PROJECT}" >/dev/null 2>&1 || gcloud pubsub topics create "${topic}" --project "${PROJECT}"
 done
 PROJECT_NUMBER="$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')"
@@ -63,8 +65,8 @@ gcloud projects add-iam-policy-binding "${PROJECT}" \
   --member "serviceAccount:service-${PROJECT_NUMBER}@gs-project-accounts.iam.gserviceaccount.com" \
   --role roles/pubsub.publisher --quiet >/dev/null
 if [[ -n "${GCS_WATCH_BUCKET:-}" ]]; then
-  if ! gcloud storage buckets notifications list "gs://${GCS_WATCH_BUCKET}" --format='value(topic)' | grep -q "${GCS_PUBSUB_TOPIC}"; then
-    gcloud storage buckets notifications create "gs://${GCS_WATCH_BUCKET}" --topic "${GCS_PUBSUB_TOPIC}" --event-types OBJECT_FINALIZE --payload-format json
+  if ! gcloud storage buckets notifications list "gs://${GCS_WATCH_BUCKET}" --format='value(topic)' | grep -q "/topics/${GCS_TOPIC}\$"; then
+    gcloud storage buckets notifications create "gs://${GCS_WATCH_BUCKET}" --topic "${GCS_TOPIC}" --event-types OBJECT_FINALIZE --payload-format json
   fi
 fi
 

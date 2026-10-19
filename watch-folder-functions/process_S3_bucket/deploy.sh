@@ -28,9 +28,13 @@ set +a
 FUNCTION_NAME="${S3_PROCESS_FUNCTION_NAME:-process-s3-bucket}"
 REGION="${S3_PROCESS_REGION:-${DEPLOY_REGION:-us-central1}}"
 RUNTIME="${FUNCTION_RUNTIME:-python312}"
-EXTENSIONS="${S3_ALLOWED_EXTENSIONS:-.mp4,.mov,.mkv,.avi,.webm,.m4v,.mpg,.mpeg}"
+EXTENSIONS="${S3_ALLOWED_EXTENSIONS:-.mp4,.mov,.mkv,.webm,.avi,.mxf}"
 AWS_REGION_VALUE="${S3_REGION:-${AWS_REGION:-us-east-1}}"
 GCS_PREFIX="${S3_GCS_PREFIX:-imports/s3}"
+# The copy is streamed S3 -> GCS, so memory does not scale with video size.
+# Event-driven Gen2 functions cannot run longer than 540 s.
+FUNCTION_MEMORY="${S3_FUNCTION_MEMORY:-1Gi}"
+FUNCTION_TIMEOUT="${S3_FUNCTION_TIMEOUT:-540s}"
 SECRET_BINDINGS="API_TOKEN=${API_TOKEN_SECRET}:latest,AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID_SECRET}:latest,AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY_SECRET}:latest"
 if [[ -n "${AWS_SESSION_TOKEN_SECRET:-}" ]]; then
   SECRET_BINDINGS="${SECRET_BINDINGS},AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN_SECRET}:latest"
@@ -51,6 +55,8 @@ gcloud functions deploy "${FUNCTION_NAME}" \
   --entry-point process_s3_bucket \
   --trigger-topic "${S3_PUBSUB_TOPIC}" \
   --retry \
+  --memory "${FUNCTION_MEMORY}" \
+  --timeout "${FUNCTION_TIMEOUT}" \
   --docker-registry artifact-registry \
   --set-env-vars "^@^MAIN_API_URL=${MAIN_API_URL}@S3_WATCH_BUCKET=${S3_WATCH_BUCKET}@GCS_MAIN_BUCKET=${GCS_MAIN_BUCKET}@S3_ALLOWED_EXTENSIONS=${EXTENSIONS}@AWS_REGION=${AWS_REGION_VALUE}@S3_GCS_PREFIX=${GCS_PREFIX}" \
   --set-secrets "${SECRET_BINDINGS}" \

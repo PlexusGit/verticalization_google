@@ -48,8 +48,8 @@ A interface está em português brasileiro, é responsiva e usa somente a marca 
 | Aplicação | raiz + `app/` | UI, API, autenticação e orquestração |
 | Transcodificador | `transcode_function/` | MP4 normalizado e áudio FLAC |
 | Renderizador | `vertical_render_function/` | recorte, legendas e sobreposições |
-| Importador GCS | `functions/process_gcs_bucket/` | evento Pub/Sub de `OBJECT_FINALIZE` |
-| Importador S3 | `functions/process_S3_bucket/` | evento S3 encaminhado ao Pub/Sub |
+| Importador GCS | `watch-folder-functions/process_gcs_bucket/` (guia: [watch-folder-functions/README.md](watch-folder-functions/README.md)) | evento Pub/Sub de `OBJECT_FINALIZE` |
+| Importador S3 | `watch-folder-functions/process_S3_bucket/` | evento S3 encaminhado ao Pub/Sub |
 
 Não existe servidor de livestream neste projeto.
 
@@ -212,8 +212,8 @@ O importador GCS só é implantado quando `GCS_WATCH_BUCKET` está definido. O S
 ./transcode_function/deploy.sh
 ./vertical_render_function/deploy.sh
 ./deploy.sh
-./functions/process_gcs_bucket/deploy.sh
-./functions/process_S3_bucket/deploy.sh
+./watch-folder-functions/process_gcs_bucket/deploy.sh
+./watch-folder-functions/process_S3_bucket/deploy.sh
 ```
 
 Os workers permitem invocação pública no nível Cloud Run porque usam `X-API-Key` secreto e falham fechados quando o token não está configurado. O app também é público para permitir Google Identity Services, mas suas rotas de dados exigem sessão ou API key.
@@ -260,8 +260,8 @@ Em terminais diferentes:
 ./transcode_function/run_local.sh
 ./vertical_render_function/run_local.sh
 ./run_local.sh
-./functions/process_gcs_bucket/run_local.sh
-./functions/process_S3_bucket/run_local.sh
+./watch-folder-functions/process_gcs_bucket/run_local.sh
+./watch-folder-functions/process_S3_bucket/run_local.sh
 ```
 
 As portas podem ser alteradas com `APP_LOCAL_PORT`, `TRANSCODE_LOCAL_PORT`, `VERTICAL_RENDER_LOCAL_PORT`, `GCS_IMPORT_LOCAL_PORT` e `S3_IMPORT_LOCAL_PORT`. Ao executar o app separadamente, ele aponta automaticamente para as portas locais configuradas.
@@ -272,8 +272,8 @@ As portas podem ser alteradas com `APP_LOCAL_PORT`, `TRANSCODE_LOCAL_PORT`, `VER
 ./test.sh
 ./transcode_function/test.sh
 ./vertical_render_function/test.sh
-./functions/process_gcs_bucket/test.sh
-./functions/process_S3_bucket/test.sh
+./watch-folder-functions/process_gcs_bucket/test.sh
+./watch-folder-functions/process_S3_bucket/test.sh
 ./test_all.sh
 ```
 

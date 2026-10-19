@@ -8,8 +8,14 @@ from types import SimpleNamespace
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import main  # noqa: E402
+import importlib.util
+
+_SPEC = importlib.util.spec_from_file_location(
+    "process_gcs_bucket_main", Path(__file__).resolve().parents[1] / "main.py"
+)
+main = importlib.util.module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = main
+_SPEC.loader.exec_module(main)
 
 
 def event(payload, attributes=None):
@@ -99,3 +105,24 @@ def test_api_failure_is_raised_for_pubsub_retry(monkeypatch):
     )
     with pytest.raises(RuntimeError, match="HTTP 503"):
         main.process_gcs_bucket(event({"bucket": "incoming-videos", "name": "clip.mp4"}))
+
+
+@pytest.mark.parametrize("status", [400, 404, 413, 415, 422])
+def test_permanent_api_rejection_is_acknowledged(monkeypatch, status):
+    configure(monkeypatch)
+    monkeypatch.setattr(main.requests, "post", lambda *a, **k: SimpleNamespace(status_code=status))
+    main.process_gcs_bucket(event({"bucket": "incoming-videos", "name": "clip.mp4"}))
+
+
+@pytest.mark.parametrize("status", [401, 403, 408, 429, 500, 503])
+def test_transient_api_errors_are_retried(monkeypatch, status):
+    configure(monkeypatch)
+    monkeypatch.setattr(main.requests, "post", lambda *a, **k: SimpleNamespace(status_code=status))
+    with pytest.raises(RuntimeError, match=f"HTTP {status}"):
+        main.process_gcs_bucket(event({"bucket": "incoming-videos", "name": "clip.mp4"}))
+
+
+def test_default_extensions_match_the_api(monkeypatch):
+    monkeypatch.delenv("GCS_ALLOWED_EXTENSIONS", raising=False)
+    monkeypatch.delenv("ALLOWED_EXTENSIONS", raising=False)
+    assert main._configured_extensions() == {".mp4", ".mov", ".mkv", ".webm", ".avi", ".mxf"}

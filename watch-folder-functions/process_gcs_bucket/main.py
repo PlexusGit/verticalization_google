@@ -21,7 +21,10 @@ import functions_framework
 import requests
 
 LOGGER = logging.getLogger(__name__)
-DEFAULT_EXTENSIONS = ".mp4,.mov,.mkv,.avi,.webm,.m4v,.mpg,.mpeg"
+DEFAULT_EXTENSIONS = ".mp4,.mov,.mkv,.webm,.avi,.mxf"
+# Client errors that no retry can fix (bad payload/format). Auth, throttling and
+# 5xx responses stay retryable because an operator or a later attempt can fix them.
+PERMANENT_REJECTIONS = {400, 404, 413, 415, 422}
 
 
 def _configured_extensions() -> set[str]:
@@ -121,6 +124,10 @@ def _post_import(api_payload: Mapping[str, Any]) -> None:
     # A duplicate response means a previous delivery already completed.
     if response.status_code == 409:
         LOGGER.info("Main API reports import already exists")
+        return
+    if response.status_code in PERMANENT_REJECTIONS:
+        # Retrying cannot change the outcome and would loop forever.
+        LOGGER.error("Main API permanently rejected the import (HTTP %s); dropping message", response.status_code)
         return
     if not 200 <= response.status_code < 300:
         raise RuntimeError(f"Main API returned HTTP {response.status_code}")

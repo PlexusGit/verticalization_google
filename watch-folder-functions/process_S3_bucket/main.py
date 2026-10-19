@@ -15,7 +15,6 @@ import logging
 import mimetypes
 import os
 import re
-import tempfile
 from pathlib import PurePosixPath
 from typing import Any, Iterator, Mapping
 from urllib.parse import unquote_plus
@@ -27,8 +26,12 @@ from google.api_core.exceptions import PreconditionFailed
 from google.cloud import storage
 
 LOGGER = logging.getLogger(__name__)
-DEFAULT_EXTENSIONS = ".mp4,.mov,.mkv,.avi,.webm,.m4v,.mpg,.mpeg"
+DEFAULT_EXTENSIONS = ".mp4,.mov,.mkv,.webm,.avi,.mxf"
 _SAFE_COMPONENT = re.compile(r"[^A-Za-z0-9._-]+")
+UPLOAD_CHUNK_BYTES = 16 * 1024 * 1024
+# Client errors that no retry can fix (bad payload/format). Auth, throttling and
+# 5xx responses stay retryable because an operator or a later attempt can fix them.
+PERMANENT_REJECTIONS = {400, 404, 413, 415, 422}
 
 
 def _configured_extensions() -> set[str]:
@@ -139,31 +142,34 @@ def _destination_path(source: Mapping[str, Any]) -> str:
     return f"{prefix}/{safe_bucket}/{digest}/{safe_filename}"
 
 
-def _download_and_upload(source: Mapping[str, Any], destination: str) -> None:
-    """Download one S3 object to /tmp and atomically create its GCS copy."""
+def _main_bucket() -> str:
     main_bucket = os.getenv("GCS_MAIN_BUCKET", os.getenv("MAIN_BUCKET", "")).strip()
     if not main_bucket:
         raise RuntimeError("GCS_MAIN_BUCKET must be configured")
+    return main_bucket
+
+
+def _download_and_upload(source: Mapping[str, Any], destination: str) -> None:
+    """Stream one S3 object into GCS without staging it in memory or on disk.
+
+    Cloud Functions keep the file system in memory, so the object is piped from
+    S3 to GCS in chunks. A resumable upload only creates the object when it is
+    finalized, so a failed transfer never leaves a partial video behind.
+    """
+    blob = storage.Client().bucket(_main_bucket()).blob(destination)
+    if blob.exists():
+        # A previous delivery already copied this exact object version.
+        LOGGER.info("Deterministic GCS destination already exists")
+        return
 
     s3 = boto3.client("s3", region_name=os.getenv("AWS_REGION") or None)
-    gcs = storage.Client()
-    blob = gcs.bucket(main_bucket).blob(destination)
-
-    temporary = tempfile.NamedTemporaryFile(prefix="s3-import-", delete=False)
-    temporary.close()
+    request = {"Bucket": str(source["bucket"]), "Key": str(source["key"])}
+    if source.get("version_id"):
+        request["VersionId"] = str(source["version_id"])
+    response = s3.get_object(**request)
+    body = response["Body"]
     try:
-        version_id = source.get("version_id")
-        if version_id:
-            s3.download_file(
-                str(source["bucket"]),
-                str(source["key"]),
-                temporary.name,
-                ExtraArgs={"VersionId": str(version_id)},
-            )
-        else:
-            s3.download_file(str(source["bucket"]), str(source["key"]), temporary.name)
-
-        metadata = {
+        blob.metadata = {
             "source-provider": "s3",
             "source-bucket": str(source["bucket"]),
             "source-key-sha256": hashlib.sha256(str(source["key"]).encode("utf-8")).hexdigest(),
@@ -171,26 +177,32 @@ def _download_and_upload(source: Mapping[str, Any], destination: str) -> None:
             "source-etag": str(source.get("etag") or ""),
             "idempotency-key": _idempotency_key(source),
         }
-        blob.metadata = metadata
+        blob.chunk_size = UPLOAD_CHUNK_BYTES
         content_type = mimetypes.guess_type(str(source["key"]))[0] or "application/octet-stream"
         try:
             # Generation zero makes concurrent/retried deliveries idempotent.
-            blob.upload_from_filename(
-                temporary.name,
+            blob.upload_from_file(
+                body,
                 content_type=content_type,
+                size=response.get("ContentLength"),
                 if_generation_match=0,
             )
         except PreconditionFailed:
             LOGGER.info("Deterministic GCS destination already exists")
     finally:
-        try:
-            os.remove(temporary.name)
-        except FileNotFoundError:
-            pass
+        body.close()
+
+
+def _delete_intermediate_copy(destination: str) -> None:
+    """Remove the staging copy once the API owns a managed copy (best effort)."""
+    try:
+        storage.Client().bucket(_main_bucket()).blob(destination).delete()
+    except Exception:
+        LOGGER.warning("Could not delete the intermediate S3 import copy", exc_info=True)
 
 
 def _build_api_payload(source: Mapping[str, Any], destination: str) -> dict[str, Any]:
-    main_bucket = os.getenv("GCS_MAIN_BUCKET", os.getenv("MAIN_BUCKET", "")).strip()
+    main_bucket = _main_bucket()
     key = _idempotency_key(source)
     return {
         "source": "s3",
@@ -236,6 +248,10 @@ def _post_import(api_payload: Mapping[str, Any]) -> None:
     if response.status_code == 409:
         LOGGER.info("Main API reports import already exists")
         return
+    if response.status_code in PERMANENT_REJECTIONS:
+        # Retrying cannot change the outcome and would loop forever.
+        LOGGER.error("Main API permanently rejected the import (HTTP %s); dropping message", response.status_code)
+        return
     if not 200 <= response.status_code < 300:
         raise RuntimeError(f"Main API returned HTTP {response.status_code}")
 
@@ -269,6 +285,7 @@ def process_s3_bucket(cloud_event: Any) -> None:
         )
         _download_and_upload(source, destination)
         _post_import(_build_api_payload(source, destination))
+        _delete_intermediate_copy(destination)
 
     if not matched:
         LOGGER.info("No relevant S3 objects in Pub/Sub message")

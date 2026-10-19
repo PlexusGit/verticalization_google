@@ -27,10 +27,10 @@ upsert_env GCS_MAIN_BUCKET "${BUCKET_NAME}"
 "${ROOT}/deploy.sh" >/dev/null
 
 echo "4/5 — Importador GCS"
-if [[ -n "${GCS_WATCH_BUCKET:-}" ]]; then "${ROOT}/functions/process_gcs_bucket/deploy.sh"; else echo "Ignorado: GCS_WATCH_BUCKET vazio."; fi
+if [[ -n "${GCS_WATCH_BUCKET:-}" ]]; then "${ROOT}/watch-folder-functions/process_gcs_bucket/deploy.sh"; else echo "Ignorado: GCS_WATCH_BUCKET vazio."; fi
 
 echo "5/5 — Importador S3"
-if [[ -n "${S3_WATCH_BUCKET:-}" && -n "${AWS_ACCESS_KEY_ID_SECRET:-}" && -n "${AWS_SECRET_ACCESS_KEY_SECRET:-}" ]]; then "${ROOT}/functions/process_S3_bucket/deploy.sh"; else echo "Ignorado: configuração S3 incompleta."; fi
+if [[ -n "${S3_WATCH_BUCKET:-}" && -n "${AWS_ACCESS_KEY_ID_SECRET:-}" && -n "${AWS_SECRET_ACCESS_KEY_SECRET:-}" ]]; then "${ROOT}/watch-folder-functions/process_S3_bucket/deploy.sh"; else echo "Ignorado: configuração S3 incompleta."; fi
 
 CORS_FILE="$(mktemp)"; trap 'rm -f "${CORS_FILE}"' EXIT
 printf '[{"origin":["%s","http://localhost:8080"],"method":["GET","HEAD","PUT","POST"],"responseHeader":["Content-Type","Content-Length","Range"],"maxAgeSeconds":3600}]' "${APP_URL}" > "${CORS_FILE}"

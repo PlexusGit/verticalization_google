@@ -28,8 +28,8 @@ A aplicação usa Cloud Run, Cloud Functions Gen2, Firestore, Cloud Storage, Spe
 | `tests/` | Testes da aplicação principal |
 | `transcode_function/` | Worker de normalização de vídeo em CPU/GPU e seus testes |
 | `vertical_render_function/` | Renderizador de vídeo vertical e seus testes |
-| `functions/process_gcs_bucket/` | Importador opcional de Pub/Sub do GCS |
-| `functions/process_S3_bucket/` | Importador opcional de S3 para Pub/Sub |
+| `watch-folder-functions/process_gcs_bucket/` | Importador opcional de Pub/Sub do GCS |
+| `watch-folder-functions/process_S3_bucket/` | Importador opcional de S3 para Pub/Sub |
 | `scripts/` | Utilitários compartilhados de shell e manutenção |
 | `setup_gcp.sh` | Configuração idempotente de recursos no GCP |
 | `run_all_local.sh` | Orquestrador de desenvolvimento local |
@@ -85,8 +85,8 @@ Para executar os serviços separadamente, use:
 ./transcode_function/run_local.sh
 ./vertical_render_function/run_local.sh
 ./run_local.sh
-./functions/process_gcs_bucket/run_local.sh
-./functions/process_S3_bucket/run_local.sh
+./watch-folder-functions/process_gcs_bucket/run_local.sh
+./watch-folder-functions/process_S3_bucket/run_local.sh
 ```
 
 ## Fazer uma alteração
@@ -127,8 +127,8 @@ Cada componente implantável tem seu próprio conjunto de testes:
 ```bash
 ./transcode_function/test.sh
 ./vertical_render_function/test.sh
-./functions/process_gcs_bucket/test.sh
-./functions/process_S3_bucket/test.sh
+./watch-folder-functions/process_gcs_bucket/test.sh
+./watch-folder-functions/process_S3_bucket/test.sh
 ```
 
 Antes de enviar um pull request, execute todos os conjuntos e valide todos os scripts de shell:

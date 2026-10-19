@@ -429,6 +429,12 @@ Deixe todas estas variáveis vazias quando o primeiro deploy usar somente upload
 - Região AWS do bucket.
 - Padrão: `us-east-1`.
 
+### `S3_FUNCTION_MEMORY` e `S3_FUNCTION_TIMEOUT`
+
+- **Fase:** opcionais.
+- Memória (padrão `1Gi`) e timeout (padrão `540s`) da função S3. A cópia S3 → GCS é feita por streaming, então a memória não cresce com o tamanho do vídeo.
+- `540s` é o limite máximo de funções Gen2 acionadas por evento.
+
 ### `AWS_ACCESS_KEY_ID`
 
 - Access key usada somente pelo importador S3.
