@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plexus Vertical Cuts — Como o vídeo é processado</title>
+<style>
+:root{--bg:#0f1420;--panel:#171e2e;--panel2:#1d2538;--line:#2a3550;--text:#e6ebf5;--muted:#9aa8c7;--accent:#5aa2ff;--accent2:#7ee2b8;--warn:#ffcf6b;--code:#0b0f19;--chip:#24304a}
+:root[data-theme=light]{--bg:#f6f8fc;--panel:#ffffff;--panel2:#f0f3fa;--line:#d8dfee;--text:#1b2437;--muted:#5a6785;--accent:#1f6fe0;--accent2:#0f9a6b;--warn:#a96b00;--code:#f3f5fa;--chip:#e6ecf8}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:76px}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+code{background:var(--chip);padding:1px 6px;border-radius:5px;font-size:.88em}
+header{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding:10px 20px}
+header h1{font-size:16px;margin:0;flex:1;min-width:230px}header h1 small{display:block;color:var(--muted);font-weight:400;font-size:12px}
+.ctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+select,input[type=search],button{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font:inherit;font-size:13px}
+button{cursor:pointer}button:hover{border-color:var(--accent)}button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+input[type=search]{width:190px}
+.layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:28px;max-width:1380px;margin:0 auto;padding:22px 20px 80px}
+nav#toc{position:sticky;top:76px;align-self:start;max-height:calc(100vh - 96px);overflow:auto;font-size:13px;padding-right:6px}
+nav#toc a{display:block;padding:5px 10px;border-left:2px solid var(--line);color:var(--muted);border-radius:0 6px 6px 0}
+nav#toc a.active{border-left-color:var(--accent);color:var(--text);background:var(--panel)}
+nav#toc a.hidden{display:none}
+.hero{background:linear-gradient(135deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:14px;padding:22px 24px;margin-bottom:22px}
+.hero h2{margin:0 0 6px;font-size:22px}.hero p{margin:6px 0;color:var(--muted)}
+.flow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:14px 0 6px}
+.node{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:7px 11px;font-size:12.5px;cursor:pointer;transition:.2s;position:relative}
+.node b{display:block;font-size:11px;color:var(--muted);font-weight:500}
+.node.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,var(--panel));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
+.node.user{border-style:dashed}.node.err{border-color:#ff7a7a}
+.arrow{color:var(--muted)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:8px}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
+details.stage{background:var(--panel);border:1px solid var(--line);border-radius:14px;margin:0 0 18px;overflow:hidden}
+details.stage.hit{outline:2px solid var(--accent2)}
+details.stage>summary,.stage-head{display:flex;gap:12px;align-items:center;padding:14px 18px;cursor:pointer;list-style:none;background:var(--panel2)}
+.stage-head::-webkit-details-marker{display:none}
+.num{flex:none;width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;font-weight:700;font-size:13px}
+.stage-head h3{margin:0;font-size:17px;flex:1}
+.chips{display:flex;gap:6px;flex-wrap:wrap}.chip{background:var(--chip);border-radius:999px;padding:2px 9px;font-size:11.5px;color:var(--muted)}
+.chip.st{color:var(--accent2)}.chip.who{color:var(--warn)}
+.caret{color:var(--muted);transition:.2s}details[open]>.stage-head .caret{transform:rotate(90deg)}
+.body{padding:6px 20px 20px}
+.body h4{margin:18px 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.body ul{margin:6px 0 6px 18px;padding:0}.body li{margin:4px 0}
+.io{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}
+.io>div{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13.5px}
+.io b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--accent2);margin-bottom:3px}
+table.t{width:100%;border-collapse:collapse;font-size:13.5px;margin:6px 0}
+table.t th,table.t td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+table.t th{color:var(--muted);font-weight:600;font-size:12px}
+.refs{list-style:none;margin:6px 0!important;padding:0!important}
+.ref{border:1px solid var(--line);border-radius:10px;margin:7px 0;background:var(--panel2)}
+.ref-row{display:flex;gap:10px;align-items:center;padding:8px 12px;flex-wrap:wrap}
+.ref-row .lbl{flex:1;min-width:200px;font-size:13.5px}
+.ref-row .lbl small{display:block;color:var(--muted)}
+.ref-row a.gh{font-size:12px;border:1px solid var(--line);border-radius:7px;padding:3px 9px;white-space:nowrap}
+.ref-row button{font-size:12px;padding:3px 9px}
+pre.snip{margin:0;padding:10px 12px;background:var(--code);border-top:1px solid var(--line);overflow:auto;font-size:12.3px;line-height:1.5;max-height:420px}
+pre.snip .ln{color:var(--muted);user-select:none;display:inline-block;width:46px;text-align:right;margin-right:12px}
+.note{border-left:3px solid var(--warn);background:color-mix(in srgb,var(--warn) 10%,var(--panel2));padding:8px 12px;border-radius:0 8px 8px 0;margin:10px 0;font-size:13.5px}
+.tabs{display:flex;gap:6px;margin:12px 0 0;flex-wrap:wrap}.tabs button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.tabpane{display:none;padding-top:4px}.tabpane.on{display:block}
+.widget{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:14px;margin:14px 0}
+.widget h5{margin:0 0 8px;font-size:14px}
+.row{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+canvas{background:#000;border-radius:8px;max-width:100%;border:1px solid var(--line)}
+label.sl{display:block;font-size:12.5px;color:var(--muted);margin:6px 0}label.sl input[type=range]{width:100%}
+.out{font-size:13px}.out b{color:var(--accent2)}
+.fp label{display:flex;gap:8px;align-items:flex-start;margin:5px 0;font-size:13.5px}
+.verdict{margin-top:10px;padding:10px 12px;border-radius:8px;font-weight:600}
+.verdict.ok{background:color-mix(in srgb,var(--accent2) 16%,transparent);color:var(--accent2)}
+.verdict.bad{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn)}
+footer{max-width:1380px;margin:0 auto;padding:0 20px 40px;color:var(--muted);font-size:12.5px}
+mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;border-radius:3px}
+@media(max-width:900px){.layout{grid-template-columns:1fr}nav#toc{display:none}.io{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Plexus Vertical Cuts — processamento de vídeo<small id="refline"></small></h1>
+  <div class="ctl">
+    <input id="q" type="search" placeholder="Buscar (ex.: Chirp, ffmpeg, fingerprint)…" aria-label="Buscar">
+    <label style="font-size:12px;color:var(--muted)">Links do GitHub
+      <select id="refsel">
+        <option value="commit">commit fixo (permalink)</option>
+        <option value="branch">branch main (pode mudar)</option>
+      </select></label>
+    <button id="expand">Expandir tudo</button>
+    <button id="collapse">Recolher tudo</button>
+    <button id="theme" aria-label="Alternar tema">Tema</button>
+  </div>
+</header>
+
+<div class="layout">
+  <nav id="toc" aria-label="Etapas"></nav>
+  <main id="content">
+    <div class="hero" id="hero">
+      <h2>Do arquivo de vídeo aos cortes verticais</h2>
+      <p>Este guia descreve, de forma exata e técnica, cada etapa do pipeline — o que roda, onde, com quais parâmetros — e cada etapa aponta para as linhas do código no GitHub. Clique em um passo do fluxo abaixo, ou use <b>Ver trecho</b> para carregar o código aqui mesmo.</p>
+      <div class="flow" id="flow"></div>
+      <div class="legend">
+        <span><i class="dot" style="background:var(--accent)"></i>etapa automática</span>
+        <span><i class="dot" style="background:var(--warn)"></i>etapa humana (borda tracejada)</span>
+        <span><i class="dot" style="background:#ff7a7a"></i>qualquer etapa pode terminar em <code>ERROR</code> (com retry)</span>
+      </div>
+      <p style="margin-top:12px"><button class="primary" id="play">▶ Reproduzir o fluxo de estados</button> <span id="playinfo" class="out"></span></p>
+    </div>
+    <div id="stages"></div>
+  </main>
+</div>
+<footer>
+  Código-fonte: <a id="repolink" target="_blank" rel="noopener"></a>. Os números de linha dos links são validados contra o commit fixo pelo teste <code>tests/test_docs_links.py</code>; ao trocar para a branch <code>main</code> eles podem se deslocar conforme o código evolui. Em repositório privado, os links <b>GitHub ↗</b> exigem login; para ler os trechos dentro da página, sirva-a da raiz do repositório com <code>python3 -m http.server</code> e abra <code>/docs/</code>.
+</footer>
+
+<script type="application/json" id="doc-data">
+{
+  "repo": "https://github.com/PlexusGit/verticalization_google",
+  "commit": "344ceb05ac0263f285ee1dca4052b02a20576586",
+  "branch": "main",
+  "states": [
+    {"id": "UPLOADING", "label": "UPLOADING", "who": "app", "stage": "intake", "text": "Registro criado; aguardando o arquivo de origem."},
+    {"id": "TRANSCODING", "label": "TRANSCODING", "who": "transcode", "stage": "transcode", "text": "Worker de transcode gera o MP4 H.264 normalizado e os blocos de áudio FLAC."},
+    {"id": "TRANSCRIBING", "label": "TRANSCRIBING", "who": "chirp", "stage": "transcribe", "text": "Speech-to-Text v2 (Chirp 3) transcreve cada bloco de áudio."},
+    {"id": "SUGGESTING", "label": "SUGGESTING", "who": "gemini", "stage": "suggest", "text": "Gemini propõe capítulos a partir das legendas."},
+    {"id": "RENDERING_DRAFTS", "label": "RENDERING_DRAFTS", "who": "render", "stage": "drafts", "text": "Um rascunho vertical (sem legendas/template) por capítulo."},
+    {"id": "PENDING_REVIEW", "label": "PENDING_REVIEW", "who": "user", "stage": "review", "text": "Revisão humana: editar limites, enquadramento, legendas e template."},
+    {"id": "RENDERING_FINALS", "label": "RENDERING_FINALS", "who": "render", "stage": "approve", "text": "Finais verticais com legendas e template + corte horizontal 16:9."},
+    {"id": "COMPLETED", "label": "COMPLETED", "who": "app", "stage": "delivery", "text": "Tudo pronto para download."}
+  ],
+  "stages": [
+    {
+      "id": "intake", "title": "Entrada do vídeo", "status": ["UPLOADING"], "who": ["app"],
+      "summary": "Três caminhos criam o mesmo registro no Firestore e disparam o mesmo pipeline: upload multipart, upload resumível direto ao GCS e importação de bucket.",
+      "io": {"in": "Arquivo de vídeo (.mp4 .mov .mkv .webm .avi .mxf), título, SRT opcional.", "out": "Documento <code>vertical_cuts_videos/{video_id}</code> e objeto <code>{video_id}/{video_id}_source.ext</code> no GCS; <code>process_video</code> agendado."},
+      "facts": [
+        "<b>Registro:</b> <code>create_video_record</code> grava o documento com <code>status=UPLOADING</code>. O id é aleatório (<code>v_&lt;uuid[:16]&gt;</code>) ou, em importações, determinístico: <code>v_import_&lt;sha256(source_id)[:16]&gt;</code> — repetir o mesmo <code>source_id</code> devolve o mesmo vídeo (<code>created=false</code>).",
+        "<b>Autenticação:</b> sessão Google (cookie assinado) ou cabeçalho <code>X-API-Key</code> igual a <code>SECURITY_TOKEN</code>. Uploads por API key contam para o dono <code>\"api\"</code>.",
+        "<b>Limite diário:</b> <code>_daily_limit_reached</code> conta os vídeos do dono criados hoje (UTC) contra <code>DAILY_VIDEO_LIMIT</code> (20) e responde <code>429</code>.",
+        "<b>Upload resumível:</b> <code>/api/upload/init</code> cria a sessão no GCS (origem CORS restrita) e o navegador envia os bytes direto ao bucket; <code>/api/upload/finalize</code> confere se o objeto existe, opcionalmente grava um SRT enviado, muda para <code>TRANSCODING</code> e agenda <code>process_video</code> em <code>BackgroundTasks</code>.",
+        "<b>Upload multipart:</b> <code>POST /api/videos</code> grava o corpo em arquivo temporário em blocos de 8 MiB e o envia ao GCS; recusa arquivo vazio.",
+        "<b>Importação:</b> <code>POST /api/import/gcs</code> copia o objeto do bucket de origem para o caminho gerenciado (<code>storage.copy_object</code>) sem passar os bytes pelo app."
+      ],
+      "refs": [
+        {"label": "create_video_record — cria o documento e o id (aleatório ou determinístico)", "path": "app/services/processing.py", "start": 23, "end": 64, "symbol": "def create_video_record"},
+        {"label": "source_object_path — caminho do objeto de origem no GCS", "path": "app/services/processing.py", "start": 67, "end": 69, "symbol": "def source_object_path"},
+        {"label": "_daily_limit_reached — limite diário por dono", "path": "app/routers/api.py", "start": 135, "end": 149, "symbol": "def _daily_limit_reached"},
+        {"label": "POST /api/upload/init — sessão resumível", "path": "app/routers/api.py", "start": 152, "end": 185, "symbol": "async def upload_init"},
+        {"label": "POST /api/upload/finalize — valida e inicia o processamento", "path": "app/routers/api.py", "start": 188, "end": 213, "symbol": "async def upload_finalize"},
+        {"label": "POST /api/videos — upload multipart", "path": "app/routers/api.py", "start": 216, "end": 256, "symbol": "async def multipart_upload"},
+        {"label": "POST /api/import/gcs — importação idempotente", "path": "app/routers/api.py", "start": 259, "end": 304, "symbol": "async def import_gcs"},
+        {"label": "store_uploaded_subtitles — valida e salva SRT enviado pelo usuário", "path": "app/services/processing.py", "start": 72, "end": 93, "symbol": "def store_uploaded_subtitles"},
+        {"label": "request_is_authenticated — sessão ou X-API-Key", "path": "app/auth.py", "start": 63, "end": 70, "symbol": "def request_is_authenticated"},
+        {"label": "storage.create_resumable_upload_session / copy_object", "path": "app/services/storage.py", "start": 53, "end": 76, "symbol": "def copy_object"}
+      ]
+    },
+    {
+      "id": "watch", "title": "Pastas monitoradas (GCS e S3)", "status": ["UPLOADING"], "who": ["pubsub", "functions"],
+      "summary": "Duas Cloud Functions Gen2 transformam a chegada de um arquivo em um bucket em uma chamada a <code>/api/import/gcs</code>.",
+      "io": {"in": "Notificação <code>OBJECT_FINALIZE</code> do GCS (via Pub/Sub) ou evento S3 (via ponte AWS → Pub/Sub).", "out": "<code>POST /api/import/gcs</code> com <code>Idempotency-Key</code> e <code>X-API-Key</code>."},
+      "facts": [
+        "<b>GCS:</b> a função decodifica a mensagem Pub/Sub (base64 → JSON), ignora eventos que não sejam <code>OBJECT_FINALIZE</code>, outro bucket ou extensão fora da lista, e chama a API; é a API que copia o objeto para o bucket gerenciado.",
+        "<b>S3:</b> a função faz <i>streaming</i> do objeto (<code>boto3 get_object</code> → upload resumível do GCS em blocos de 16 MiB, sem passar por memória ou disco) para <code>{S3_GCS_PREFIX}/{bucket}/{hash}/{arquivo}</code> com <code>if_generation_match=0</code>; pula a cópia se o destino já existe; chama a API e, depois, apaga a cópia intermediária.",
+        "<b>Idempotência:</b> chave = SHA-256 de <code>bucket + objeto + generation</code> (GCS) ou <code>bucket + chave + versionId/etag/sequencer</code> (S3).",
+        "<b>Retentativas:</b> <code>2xx</code>/<code>409</code> = sucesso; <code>400/404/413/415/422</code> = rejeição permanente (confirma a mensagem); <code>401/403/408/429/5xx</code> e erros de rede lançam exceção e o Pub/Sub reentrega (<code>--retry</code>).",
+        "O guia operacional (buckets, IAM, gatilhos, ponte AWS) está em <code>watch-folder-functions/README.md</code>."
+      ],
+      "refs": [
+        {"label": "process_gcs_bucket — handler do gatilho GCS", "path": "watch-folder-functions/process_gcs_bucket/main.py", "start": 136, "end": 171, "symbol": "def process_gcs_bucket"},
+        {"label": "GCS: _post_import — classificação das respostas da API", "path": "watch-folder-functions/process_gcs_bucket/main.py", "start": 105, "end": 134, "symbol": "def _post_import"},
+        {"label": "process_s3_bucket — handler do gatilho S3", "path": "watch-folder-functions/process_S3_bucket/main.py", "start": 259, "end": 292, "symbol": "def process_s3_bucket"},
+        {"label": "S3: _download_and_upload — streaming S3 → GCS", "path": "watch-folder-functions/process_S3_bucket/main.py", "start": 152, "end": 194, "symbol": "def _download_and_upload"},
+        {"label": "S3: _idempotency_key / _destination_path", "path": "watch-folder-functions/process_S3_bucket/main.py", "start": 128, "end": 142, "symbol": "def _idempotency_key"},
+        {"label": "deploy da função GCS (gatilho Pub/Sub, segredo da API)", "path": "watch-folder-functions/process_gcs_bucket/deploy.sh", "start": 36, "end": 49, "symbol": "gcloud functions deploy"}
+      ]
+    },
+    {
+      "id": "orchestrate", "title": "Orquestração: process_video", "status": ["TRANSCODING", "TRANSCRIBING", "SUGGESTING", "RENDERING_DRAFTS", "PENDING_REVIEW"], "who": ["app"],
+      "summary": "<code>process_video</code> é a máquina de estados do pré-processamento. Roda em segundo plano dentro do app, persiste a saída de cada etapa antes de seguir e, por isso, pode ser retomada.",
+      "io": {"in": "<code>video_id</code> com <code>gcs_source_path</code>.", "out": "Capítulos com rascunhos prontos e <code>status=PENDING_REVIEW</code> — ou <code>ERROR</code> com <code>error</code>/<code>error_type</code>."},
+      "facts": [
+        "<b>Retomável:</b> o transcode só roda se <code>gcs_high_path</code> não existe no storage ou faltam <code>gcs_audio_chunks</code>; a transcrição só roda se <code>subtitle_text</code> está vazio. Um <code>retry</code> reaproveita o que já foi salvo.",
+        "<b>Estados:</b> cada etapa chama <code>_stage</code> (atualiza <code>status</code> e <code>updated_at</code>). Qualquer exceção cai em <code>_set_error</code>, que grava <code>ERROR</code> + mensagem.",
+        "<b>Observabilidade:</b> <code>events.record</code> escreve um log JSON estruturado e, em melhor esforço, um documento em <code>events/</code> do vídeo; falha de Firestore nunca interrompe a mídia.",
+        "<b>Rascunhos em série:</b> os capítulos são renderizados um a um; falhas são acumuladas e levantadas depois do laço (um capítulo ruim não impede os demais de renderizar, mas o vídeo termina em <code>ERROR</code>)."
+      ],
+      "refs": [
+        {"label": "process_video — todo o pipeline de pré-processamento", "path": "app/services/processing.py", "start": 96, "end": 302, "symbol": "def process_video"},
+        {"label": "_stage / _set_error — transições de estado e erro", "path": "app/services/processing.py", "start": 705, "end": 721, "symbol": "def _stage"},
+        {"label": "events.record — log estruturado + histórico durável", "path": "app/services/events.py", "start": 31, "end": 66, "symbol": "def record"},
+        {"label": "VideoStatus — estados possíveis", "path": "app/models.py", "start": 53, "end": 62, "symbol": "class VideoStatus"},
+        {"label": "POST /retry — retoma a partir de ERROR/UPLOADING", "path": "app/routers/api.py", "start": 1007, "end": 1019, "symbol": "async def retry_video"}
+      ]
+    },
+    {
+      "id": "transcode", "title": "Transcode e extração de áudio", "status": ["TRANSCODING"], "who": ["transcode"],
+      "summary": "Um worker Cloud Run (Functions Framework + ffmpeg) baixa a origem, normaliza o vídeo para H.264/AAC de até 1080p e fatia o áudio em FLAC mono 16 kHz para o reconhecimento de fala.",
+      "io": {"in": "<code>{video_id, gcs_source_path, high_gcs_path}</code> via <code>POST /</code> com <code>X-API-Key</code> (timeout do cliente: 3600 s).", "out": "<code>high_gcs_path</code>, <code>gcs_audio_chunks[{path, offset_seconds}]</code>, <code>duration_seconds</code>, <code>resolution</code>, <code>video_encoder</code>."},
+      "params": [
+        ["Escala", "<code>scale=-2:min(1080\\,ih)</code> — nunca amplia; largura par"],
+        ["Codec (CPU)", "<code>libx264 -preset medium -crf 18</code>"],
+        ["Codec (GPU)", "<code>h264_nvenc -preset p5 -tune hq -rc vbr -cq 19 -b:v 0</code>; se falhar, refaz com libx264"],
+        ["Compatibilidade", "<code>-pix_fmt yuv420p -profile:v high -movflags +faststart</code>"],
+        ["Áudio do vídeo", "AAC 192 kb/s, 48 kHz"],
+        ["Áudio p/ STT", "<code>-ac 1 -ar 16000 -c:a flac -f segment -segment_time 600</code> (blocos de 600 s)"],
+        ["Timeout", "<code>TRANSCODE_TIMEOUT_SECONDS</code> = 10 800 s por comando"]
+      ],
+      "facts": [
+        "<b>Autenticação:</b> comparação em tempo constante (<code>hmac.compare_digest</code>); sem <code>SECURITY_TOKEN</code> configurado o worker recusa tudo (falha fechada).",
+        "<b>Segurança de caminhos:</b> <code>video_id</code> só aceita <code>[A-Za-z0-9._-]</code>; caminhos de objeto não podem ser <code>gs://</code> nem conter <code>..</code>.",
+        "<b>Limite de duração:</b> o app compara <code>duration_seconds</code> com <code>MAX_VIDEO_DURATION_SECONDS</code> (3600) <i>depois</i> do transcode e falha o vídeo se excedido.",
+        "<b>Persistência no app:</b> grava <code>gcs_high_path</code>, <code>gcs_audio_chunks</code>, <code>duration_seconds</code> e <code>video_resolution{w,h}</code>. Todos os renders posteriores usam o <code>_high.mp4</code>, não o arquivo original.",
+        "<b>Falha sem áudio:</b> se não há fluxo de áudio extraível, o transcode falha (<code>source contains no extractable audio stream</code>)."
+      ],
+      "refs": [
+        {"label": "app: transcode.submit — cliente HTTP do worker", "path": "app/services/transcode.py", "start": 8, "end": 22, "symbol": "def submit"},
+        {"label": "worker: process_transcode — rota HTTP, auth e códigos de erro", "path": "transcode_function/main.py", "start": 54, "end": 102, "symbol": "def process_transcode"},
+        {"label": "worker: TranscodeProcessor.process — baixar, transcodificar, fatiar áudio, subir", "path": "transcode_function/processor.py", "start": 168, "end": 255, "symbol": "def process"},
+        {"label": "build_video_command — comando ffmpeg do vídeo normalizado", "path": "transcode_function/processor.py", "start": 113, "end": 129, "symbol": "def build_video_command"},
+        {"label": "build_audio_command — blocos FLAC mono 16 kHz", "path": "transcode_function/processor.py", "start": 132, "end": 140, "symbol": "def build_audio_command"},
+        {"label": "gpu_available — NVIDIA + h264_nvenc presentes?", "path": "transcode_function/processor.py", "start": 70, "end": 87, "symbol": "def gpu_available"},
+        {"label": "probe_media — duração e dimensões via ffprobe", "path": "transcode_function/processor.py", "start": 90, "end": 110, "symbol": "def probe_media"},
+        {"label": "app: bloco de transcode dentro de process_video", "path": "app/services/processing.py", "start": 121, "end": 174, "symbol": "result = transcode.submit"}
+      ]
+    },
+    {
+      "id": "transcribe", "title": "Transcrição PT-BR (Chirp 3)", "status": ["TRANSCRIBING"], "who": ["chirp"],
+      "summary": "Cada bloco FLAC é enviado ao Speech-to-Text v2 (<code>chirp_3</code>, <code>pt-BR</code>) em <code>BatchRecognize</code>; os tempos por palavra viram legendas SRT com o deslocamento absoluto do bloco.",
+      "io": {"in": "<code>gcs_audio_chunks</code> ordenados por <code>offset_seconds</code>.", "out": "SRT canônico em <code>{video_id}/{video_id}.srt</code> e <code>subtitle_text</code>/<code>subtitle_source=chirp_3_pt_br</code> no documento."},
+      "params": [
+        ["Modelo / idioma", "<code>chirp_3</code>, <code>pt-BR</code>, <code>enable_word_time_offsets=True</code>, decodificação automática"],
+        ["Regiões", "<code>CHIRP_LOCATION</code> (us) e <code>CHIRP_FALLBACK_LOCATION</code> (eu), alternadas a cada tentativa"],
+        ["Tentativas", "até 6 por bloco; só <code>ResourceExhausted</code> (429) é reexecutado"],
+        ["Backoff", "5 s · 2<sup>n</sup>, teto 120 s, jitter ±20 %; respeita <code>RetryInfo</code> do servidor"],
+        ["Polling", "a cada 30 s; operação expira em 50 min; 429 durante o polling reconsulta a mesma operação"],
+        ["Agrupamento", "8 palavras por legenda; fim mínimo = início + 0,4 s"]
+      ],
+      "facts": [
+        "<b>Pulada</b> quando o vídeo já tem <code>subtitle_text</code> (SRT enviado pelo usuário ou transcrição anterior).",
+        "<b>Offset:</b> o tempo de cada palavra do bloco <i>n</i> recebe <code>offset_seconds</code> do bloco, logo o SRT final está na linha do tempo do vídeo inteiro.",
+        "Erros que não são 429 interrompem a transcrição imediatamente (<code>chirp_request_failed</code>) e levam o vídeo a <code>ERROR</code>."
+      ],
+      "refs": [
+        {"label": "transcribe_chunks — laço dos blocos e montagem do SRT", "path": "app/services/chirp.py", "start": 264, "end": 298, "symbol": "def transcribe_chunks"},
+        {"label": "_recognize — alternância de regiões, backoff e retentativas", "path": "app/services/chirp.py", "start": 149, "end": 241, "symbol": "def _recognize"},
+        {"label": "_request — configuração de BatchRecognize", "path": "app/services/chirp.py", "start": 94, "end": 108, "symbol": "def _request"},
+        {"label": "_wait_for_operation — polling da operação longa", "path": "app/services/chirp.py", "start": 111, "end": 146, "symbol": "def _wait_for_operation"},
+        {"label": "_result_cues — palavras → legendas", "path": "app/services/chirp.py", "start": 244, "end": 261, "symbol": "def _result_cues"},
+        {"label": "SRT: parse_srt / to_srt / slice_srt", "path": "app/services/srt.py", "start": 33, "end": 70, "symbol": "def parse_srt"},
+        {"label": "bloco de transcrição dentro de process_video", "path": "app/services/processing.py", "start": 176, "end": 228, "symbol": "chirp.transcribe_chunks"}
+      ]
+    },
+    {
+      "id": "suggest", "title": "Sugestão de capítulos (Gemini)", "status": ["SUGGESTING"], "who": ["gemini"],
+      "summary": "O SRT completo é enviado ao Gemini com um prompt editável; a resposta estruturada (JSON validado por Pydantic) vira os capítulos do vídeo.",
+      "io": {"in": "<code>subtitle_text</code> (SRT) + prompt (override no Firestore ou padrão).", "out": "Documentos <code>chapters/chapter_001…N</code> com título, justificativa, limites e legenda relativa."},
+      "facts": [
+        "<b>Prompt:</b> <code>prompts.get_prompt</code> devolve a edição do administrador (coleção <code>vertical_cuts_prompts</code>) ou o texto padrão. Os marcadores <code>{minimum}</code>/<code>{maximum}</code> (15 e 180 s) são preenchidos com <code>str.format</code>; se a edição quebrar os marcadores, o padrão é usado — o pipeline nunca falha por um prompt ruim.",
+        "<b>Saída estruturada:</b> <code>response_mime_type=application/json</code> + <code>response_schema=ChapterSuggestions</code>, modelo <code>GEMINI_MODEL</code> (padrão <code>gemini-2.5-flash</code>). Cada item é validado: <code>start ≥ 0</code> e <code>end &gt; start</code>.",
+        "<b>O que o código <i>não</i> garante:</b> a duração mínima/máxima e a ausência de sobreposição são pedidas no prompt, mas não são verificadas no código; só os limites do vídeo são checados na edição manual (<code>PUT /chapters</code>).",
+        "<b>Persistência:</b> para cada sugestão grava <code>chapter_%03d</code> com <code>selected=true</code>, <code>draft_status=QUEUED</code> e o SRT recortado por <code>srt.slice_srt</code> — cues que intersectam o intervalo, deslocados para o tempo <i>relativo ao capítulo</i>.",
+        "Sem nenhum capítulo sugerido, o vídeo vai a <code>ERROR</code> (<code>nenhum capítulo foi sugerido</code>)."
+      ],
+      "refs": [
+        {"label": "suggest_chapters — chamada ao Gemini", "path": "app/services/gemini.py", "start": 38, "end": 68, "symbol": "def suggest_chapters"},
+        {"label": "SuggestedChapter — validação de cada capítulo", "path": "app/services/gemini.py", "start": 12, "end": 31, "symbol": "class SuggestedChapter"},
+        {"label": "prompt padrão e registro de prompts", "path": "app/services/prompts.py", "start": 16, "end": 36, "symbol": "DEFAULT_CHAPTER_PROMPT"},
+        {"label": "get_prompt — override do Firestore ou padrão", "path": "app/services/prompts.py", "start": 43, "end": 52, "symbol": "def get_prompt"},
+        {"label": "slice_srt — recorte e deslocamento para tempo relativo", "path": "app/services/srt.py", "start": 62, "end": 70, "symbol": "def slice_srt"},
+        {"label": "criação dos capítulos dentro de process_video", "path": "app/services/processing.py", "start": 230, "end": 281, "symbol": "suggestions = gemini.suggest_chapters"},
+        {"label": "POST /regenerate-chapters — substitui todos os capítulos", "path": "app/routers/api.py", "start": 768, "end": 796, "symbol": "async def regenerate_chapters"}
+      ]
+    },
+    {
+      "id": "drafts", "title": "Rascunhos verticais", "status": ["RENDERING_DRAFTS"], "who": ["app", "render"],
+      "summary": "Para cada capítulo o app monta um payload de render e chama o worker vertical (Cloud Run). O rascunho serve para revisar o <b>enquadramento</b>: não leva legendas nem template.",
+      "io": {"in": "Capítulo + <code>RenderRequest</code> (padrão: <code>center_crop</code>).", "out": "<code>{video}/chapters/{chapter}/draft_xxxxxxxxxx.mp4</code> (1080×1920) e o plano de câmera v10 persistido."},
+      "facts": [
+        "<b>Registro do render:</b> <code>render_chapter</code> cria <code>renders/{render_id}</code> (<code>QUEUED</code>) e marca <code>draft_status=PROCESSING</code> no capítulo. O <code>render_id</code> (<code>draft_</code>/<code>final_</code> + 10 hex) é a chave de concorrência.",
+        "<b>Payload:</b> origem (<code>gcs_high_path</code>), <code>trim_start/end</code>, <code>video_resolution</code>, <code>mode</code>, keyframes manuais, <code>camera_plan_gcs_path/fingerprint</code> (só se <code>focal_strategy_version</code> == 10), estilo de legenda, logo e títulos. Em rascunhos, <code>captions=[]</code>.",
+        "<b>Cliente HTTP:</b> <code>vertical_render.submit</code> (timeout 3600 s) reexecuta até 2 vezes, com 10 s e 30 s de espera, só em erro de rede transitório; cada chamada traz um <code>render_id</code> único, então a retentativa não duplica saída.",
+        "<b>Worker:</b> valida o payload (<code>validate_request</code>: caminhos seguros, duração ≤ 6 h, ≤ 20 títulos), grava <code>PROCESSING</code> em <code>renders/</code> e no capítulo, baixa origem/logo para um diretório temporário e escolhe o motor.",
+        "<b>Escolha do motor:</b> <code>center_crop</code> com <code>AUTOFRAME_ENGINE=v10</code> → autoframe v10; qualquer outro caso (inclui <code>split_stack</code>) → renderer legado. Se o v10 lançar exceção, cai para um <b>recorte central determinístico</b> — nunca para o detector legado.",
+        "<b>Após o render:</b> o worker sobe o MP4 e responde com o caminho de saída e os artefatos de enquadramento; o app grava <code>renders/{id}</code> como <code>COMPLETED</code> e, se este for o render mais recente, atualiza o capítulo (veja <i>Concorrência</i>)."
+      ],
+      "refs": [
+        {"label": "render_chapter — registro, payload, chamada ao worker e persistência", "path": "app/services/processing.py", "start": 358, "end": 653, "symbol": "def render_chapter"},
+        {"label": "montagem do payload enviado ao worker", "path": "app/services/processing.py", "start": 451, "end": 484, "symbol": "payload = {"},
+        {"label": "vertical_render.submit — HTTP com retry de rede", "path": "app/services/vertical_render.py", "start": 23, "end": 59, "symbol": "def submit"},
+        {"label": "worker: vertical_render — auth, validação, download, motor, upload", "path": "vertical_render_function/main.py", "start": 260, "end": 350, "symbol": "def vertical_render"},
+        {"label": "worker: validate_request — contrato do payload", "path": "vertical_render_function/renderer.py", "start": 116, "end": 183, "symbol": "def validate_request"},
+        {"label": "worker: seleção do motor e fallback determinístico", "path": "vertical_render_function/main.py", "start": 312, "end": 332, "symbol": "strategy_version = FOCAL_STRATEGY_VERSION"},
+        {"label": "loop de rascunhos dentro de process_video", "path": "app/services/processing.py", "start": 283, "end": 300, "symbol": "_stage(ref, VideoStatus.RENDERING_DRAFTS)"}
+      ]
+    },
+    {
+      "id": "v10", "title": "Enquadramento automático (autoframe v10)", "status": ["RENDERING_DRAFTS", "RENDERING_FINALS"], "who": ["render"],
+      "summary": "Para <code>center_crop</code>, o worker roda três passes: <b>analisar</b> (cenas, rostos, tracks, quem fala), <b>planejar</b> (câmera virtual com histerese) e <b>renderizar</b> (compor quadro a quadro e codificar uma única vez). Doutrina do planejador: <i>não mova a câmera a menos que precise</i>.",
+      "tabs": [
+        {"id": "analyze", "title": "1 · Analisar", "html": "<ul><li><b>Cenas:</b> PySceneDetect <code>ContentDetector(threshold=27, min_scene_len=max(2, 0,5 s))</code> no intervalo do capítulo.</li><li><b>Áudio:</b> ffmpeg extrai mono 16 kHz PCM do trecho; MFCC de 13 coeficientes (janela 25 ms, passo 10 ms) e VAD por RMS (janela 0,15 s; limiar = máx(0,005; 0,15 × percentil 95)). Sem áudio, tudo vira silêncio e a análise segue.</li><li><b>Rostos:</b> YOLO11n-face (<code>conf 0,5</code>, <code>imgsz 640</code>, lotes de 16 quadros) em <b>todos</b> os quadros, no dispositivo resolvido (<code>cuda</code>/<code>mps</code>/<code>cpu</code>).</li><li><b>Tracking:</b> guloso por IoU &gt; 0,4, dentro de cada cena; um track admite lacunas de até 10 quadros e precisa de mais de 10 detecções; caixas interpoladas e suavizadas (mediana, janela 13).</li><li><b>Quem fala (ASD):</b> LR-ASD (0,84 M de parâmetros) recebe o recorte 112×112 do rosto a 25 fps + MFCC e produz logits; as pontuações de janelas de 1–6 s são promediadas. Em Apple MPS o LR-ASD roda na CPU (pooling 3D não existe no MPS).</li><li><b>Fallback visual:</b> abertura da boca via FaceMesh (MediaPipe) — opcional; sem ele, só o LR-ASD decide.</li><li><b>Fusão:</b> <code>w = clip(|logit| / 1,0; 0; 1)</code>; <code>fala = w·p + (1−w)·(0,5·p + 0,5·visual)</code> com <code>p = sigmoid(logit)</code>; multiplicada por <code>1,0</code> onde o VAD detecta voz e <code>0,3</code> onde não.</li></ul>", "refs": [
+          {"label": "analyze — orquestra o passe 1", "path": "vertical_render_function/autoframe_v10/analyze.py", "start": 266, "end": 386, "symbol": "def analyze"},
+          {"label": "detect_scenes", "path": "vertical_render_function/autoframe_v10/analyze.py", "start": 37, "end": 50, "symbol": "def detect_scenes"},
+          {"label": "extract_audio / audio_vad", "path": "vertical_render_function/autoframe_v10/analyze.py", "start": 54, "end": 93, "symbol": "def extract_audio"},
+          {"label": "detect_faces (YOLO em lotes)", "path": "vertical_render_function/autoframe_v10/analyze.py", "start": 97, "end": 128, "symbol": "def detect_faces"},
+          {"label": "track_scene — tracking por IoU", "path": "vertical_render_function/autoframe_v10/analyze.py", "start": 131, "end": 157, "symbol": "def track_scene"},
+          {"label": "LRASD.score — logits por quadro", "path": "vertical_render_function/autoframe_v10/analyze.py", "start": 161, "end": 211, "symbol": "class LRASD"},
+          {"label": "MouthScorer — fallback visual", "path": "vertical_render_function/autoframe_v10/analyze.py", "start": 227, "end": 262, "symbol": "class MouthScorer"},
+          {"label": "fusão ASD + visual + VAD", "path": "vertical_render_function/autoframe_v10/analyze.py", "start": 359, "end": 372, "symbol": "speak = w * prob"},
+          {"label": "carregamento (cache) dos modelos", "path": "vertical_render_function/autoframe_v10/models.py", "start": 22, "end": 62, "symbol": "def face_detector"}
+        ]},
+        {"id": "plan", "title": "2 · Planejar", "html": "<ul><li><b>Alvo por quadro (histerese):</b> em cada cena, o alvo é quem fala (<code>fala ≥ 0,5</code>); sem ninguém falando, vale o maior rosto. Trocar de alvo exige que o outro tenha pontuação &gt; atual + 0,15, por <code>0,4 s</code> contínuos, e que o plano atual tenha pelo menos <code>1,5 s</code>. Trechos &lt; 0,3 s são absorvidos pelo anterior (anti-flicker).</li><li><b>Zoom fixo por segmento:</b> <code>altura_crop = clip(altura_rosto × 3,2; 0,55·H; H)</code>, <code>largura = altura × 9/16</code> (limitada à largura da fonte).</li><li><b>Posição por segmento:</b> <code>static</code> (dispersão &lt; 1,2 % da largura ou &lt; 0,5 s), <code>pan</code> (deriva &gt; 2σ com σ &lt; 6 % da largura: rampa linear) ou <code>track</code> (zona morta de 2 % da largura + filtro gaussiano σ = 0,35 s). Verticalmente o centro do rosto fica a <code>0,42</code> da altura do crop (headroom).</li><li><b>Transições:</b> entre segmentos da mesma cena, se o centro move ≤ 20 % da diagonal normalizada <i>e</i> os dois rostos coexistiram, faz <code>pan</code> de 0,45 s com easing cosseno (interpolando também o tamanho); senão, <code>cut</code>.</li><li><b>Sem rosto:</b> modo <code>center</code> — crop central 9:16 (existe o modo <code>blur</code>, não usado por padrão). O layout <code>split</code> existe no planejador, mas <code>multi_mode</code> fixo em <code>cut</code> não o expõe.</li><li>Saída: um dicionário por quadro (<code>layout</code>, <code>crop [x,y,w,h]</code>, <code>track</code>, <code>mode</code>) + lista de segmentos.</li></ul><div class=\"widget\" id=\"w-crop\"></div>", "refs": [
+          {"label": "plan — passe 2, plano por quadro", "path": "vertical_render_function/autoframe_v10/plan.py", "start": 188, "end": 304, "symbol": "def plan"},
+          {"label": "choose_targets — seleção do alvo com histerese", "path": "vertical_render_function/autoframe_v10/plan.py", "start": 56, "end": 99, "symbol": "def choose_targets"},
+          {"label": "remove_short_runs — anti-flicker", "path": "vertical_render_function/autoframe_v10/plan.py", "start": 102, "end": 114, "symbol": "def remove_short_runs"},
+          {"label": "crop_size_for — tamanho do crop (zoom)", "path": "vertical_render_function/autoframe_v10/plan.py", "start": 147, "end": 153, "symbol": "def crop_size_for"},
+          {"label": "plan_segment_path — static / pan / track", "path": "vertical_render_function/autoframe_v10/plan.py", "start": 156, "end": 184, "symbol": "def plan_segment_path"},
+          {"label": "transição cut × pan", "path": "vertical_render_function/autoframe_v10/plan.py", "start": 224, "end": 242, "symbol": "trans = \"cut\""},
+          {"label": "constantes do planejamento (Config)", "path": "vertical_render_function/autoframe_v10/config.py", "start": 60, "end": 74, "symbol": "speak_thr"}
+        ]},
+        {"id": "render", "title": "3 · Renderizar", "html": "<ul><li><b>Composição:</b> OpenCV lê a fonte quadro a quadro e aplica o plano (<code>crop_resize</code> com <code>INTER_LANCZOS4</code> até 1080×1920; <code>blur_fit</code> e <code>split</code> existem para outros layouts).</li><li><b>Uma só codificação:</b> os quadros compostos seguem como <code>rawvideo bgr24</code> por <code>pipe:0</code> para um único ffmpeg. Entradas: <code>0</code> = pipe, <code>1</code> = fonte (somente o áudio, com <code>-ss/-t</code>), <code>2</code> = logo (opcional).</li><li><b>Sobreposições:</b> o <code>overlay_builder</code> (do worker) injeta legendas ASS, logo e títulos no <code>filter_complex</code> — o mesmo encadeamento do renderer legado.</li><li><b>Codificação:</b> encoder resolvido (<code>h264_nvenc</code> em CUDA, <code>h264_videotoolbox</code> em macOS, senão <code>libx264</code>), <code>-b:v 8M -pix_fmt yuv420p -movflags +faststart</code>, áudio AAC 160 kb/s, <code>-shortest</code>. Se o encoder acelerado falhar, tenta <code>libx264</code> uma vez.</li><li><b>Dispositivo/encoder:</b> <code>TRANSCODE_USE_GPU=1</code> prefere CUDA, depois MPS, senão CPU (com aviso); <code>AUTOFRAME_DEVICE</code>/<code>AUTOFRAME_ENCODER</code> forçam valores. O laço OpenCV é CPU, independente da inferência.</li><li>Timeout do ffmpeg: <code>render_timeout = 3300 s</code> (abaixo dos 3600 s do Cloud Run).</li></ul>", "refs": [
+          {"label": "render_plan — aplica o plano e escolhe o encoder", "path": "vertical_render_function/autoframe_v10/render.py", "start": 201, "end": 247, "symbol": "def render_plan"},
+          {"label": "_run_writer — laço quadro a quadro → ffmpeg", "path": "vertical_render_function/autoframe_v10/render.py", "start": 125, "end": 198, "symbol": "def _run_writer"},
+          {"label": "ffmpeg_writer — comando e ordem das entradas", "path": "vertical_render_function/autoframe_v10/render.py", "start": 25, "end": 53, "symbol": "def ffmpeg_writer"},
+          {"label": "compose / crop_resize", "path": "vertical_render_function/autoframe_v10/render.py", "start": 56, "end": 91, "symbol": "def crop_resize"},
+          {"label": "resolve_device / resolve_encoder", "path": "vertical_render_function/autoframe_v10/config.py", "start": 112, "end": 165, "symbol": "def resolve_device"}
+        ]},
+        {"id": "artifacts", "title": "4 · Reuso do plano", "html": "<ul><li>O plano é um JSON por quadro, grande demais para o Firestore: vai como <b>gzip no GCS</b> em <code>{video}/chapters/{chapter}/autoframe/v10/{fingerprint}.plan.json.gz</code>; o caminho e o fingerprint voltam na resposta do worker e o app os grava em <code>render_options</code> do capítulo.</li><li>O <b>fingerprint</b> é o SHA-256 de: formato do plano, versão da estratégia (10), caminho e <i>generation</i> do objeto de origem, <code>trim_start/end</code> (3 casas), dimensões da fonte, checksums SHA-256 dos pesos YOLO e LR-ASD e 28 constantes do detector/planejador/saída.</li><li>No render final, o worker recalcula o fingerprint esperado; se for igual ao recebido, baixa e valida o plano (formato + fingerprint interno) e <b>não reanalisa</b> — o final usa exatamente o enquadramento aprovado no rascunho. Qualquer divergência ou falha de download reanalisa.</li><li>O app só envia o plano se <code>focal_strategy_version == FOCAL_STRATEGY_VERSION</code> (10): artefatos de outra estratégia nunca são reutilizados.</li></ul><div class=\"widget fp\" id=\"w-fp\"></div>", "refs": [
+          {"label": "plan_fingerprint — identidade de tudo que o plano usa", "path": "vertical_render_function/autoframe_v10/artifacts.py", "start": 54, "end": 71, "symbol": "def plan_fingerprint"},
+          {"label": "campos de configuração no fingerprint", "path": "vertical_render_function/autoframe_v10/artifacts.py", "start": 21, "end": 34, "symbol": "_FINGERPRINT_FIELDS"},
+          {"label": "dumps/loads do plano (gzip) e caminho do artefato", "path": "vertical_render_function/autoframe_v10/artifacts.py", "start": 74, "end": 88, "symbol": "def dumps_plan"},
+          {"label": "worker: reuso ou análise + publicação do plano", "path": "vertical_render_function/main.py", "start": 194, "end": 257, "symbol": "expected_fp = artifacts.plan_fingerprint"},
+          {"label": "app: persistência dos artefatos devolvidos pelo worker", "path": "app/services/processing.py", "start": 513, "end": 545, "symbol": "result = vertical_render.submit"}
+        ]}
+      ],
+      "io": {"in": "Fonte <code>_high.mp4</code>, <code>trim_start/end</code>, dispositivo e encoder.", "out": "MP4 1080×1920 H.264/AAC + plano gzip no GCS."},
+      "refs": []
+    },
+    {
+      "id": "manual", "title": "Modo manual (split_stack) e motor legado", "status": ["RENDERING_DRAFTS", "RENDERING_FINALS"], "who": ["render"],
+      "summary": "No modo manual, o usuário define âncoras de recorte por tempo; o renderer legado traduz cada âncora em uma expressão ffmpeg com interpolação suave e empilha dois quadros 9:8.",
+      "facts": [
+        "<b>split_stack:</b> dois recortes de largura 9/16·altura — um para o quadro superior, outro para o inferior — escalados para 1080×960 e empilhados com <code>vstack</code>. Cada recorte segue suas próprias âncoras (<code>keyframes_top</code>/<code>keyframes_bottom</code>).",
+        "<b>Âncoras:</b> <code>{time, x, y}</code>, com <code>time</code> absoluto na fonte e <code>x/y</code> = canto superior esquerdo da janela de corte. <code>keyframe_expression</code> gera uma expressão ffmpeg com easing cosseno entre âncoras; <code>compact_keyframes</code> limita o número de pontos ao que o parser do ffmpeg suporta.",
+        "<b>Limites seguros:</b> a posição é sempre <code>clamp</code>ada ao quadro (<code>max(0,min(W−crop, …))</code>).",
+        "<b>Encoder:</b> o caminho legado usa <code>libx264 -preset medium -crf 20</code>, <code>yuv420p</code>, AAC 160 kb/s, <code>+faststart</code>, tudo em um <code>filter_complex</code>; e é também o <b>fallback central determinístico</b> quando o v10 falha.",
+        "<b>Motor v3 (legado):</b> <code>AUTOFRAME_ENGINE=legacy</code> usa o detector YuNet com focos faciais (<code>FOCAL_STRATEGY_VERSION=3</code>), compactados em até 24 keyframes."
+      ],
+      "refs": [
+        {"label": "build_video_filter — center_crop e split_stack", "path": "vertical_render_function/renderer.py", "start": 387, "end": 429, "symbol": "def build_video_filter"},
+        {"label": "keyframe_expression — interpolação cosseno em ffmpeg", "path": "vertical_render_function/renderer.py", "start": 245, "end": 267, "symbol": "def keyframe_expression"},
+        {"label": "render — comando ffmpeg do motor legado", "path": "vertical_render_function/renderer.py", "start": 554, "end": 571, "symbol": "def render"},
+        {"label": "análise facial legada (YuNet, v3)", "path": "vertical_render_function/face_detection.py", "start": 509, "end": 543, "symbol": "def analyze_focal_points"},
+        {"label": "RenderRequest — contrato do app (modo, âncoras, estilo)", "path": "app/models.py", "start": 132, "end": 148, "symbol": "class RenderRequest"}
+      ]
+    },
+    {
+      "id": "overlays", "title": "Legendas, logo e título", "status": ["RENDERING_FINALS"], "who": ["render"],
+      "summary": "Legendas, logo e título entram no <b>mesmo</b> encode, como filtros ffmpeg, na ordem: legendas → logo → títulos. Só os finais os recebem.",
+      "facts": [
+        "<b>Legendas:</b> o app envia cada cue em tempo <i>absoluto</i> (<code>cue.start + chapter.start</code>); o worker as converte para ASS (<code>write_ass_captions</code>) subtraindo <code>trim_start</code> e descartando as fora do trecho. Estilo: fonte, tamanho, cor/contorno (<code>#RRGGBB</code> → <code>&amp;H00BBGGRR</code>), posição top/middle/bottom (alinhamento ASS 8/5/2, margem inferior 170) e queima via filtro <code>subtitles</code> (libass).",
+        "<b>Logo:</b> <code>scale=W:H</code>, <code>format=rgba</code>, <code>colorchannelmixer=aa=opacidade</code> e <code>overlay=x:y</code>; as posições em porcentagem do template viram pixels do app (1080×1920). A imagem de entrada é de um quadro só — usar <code>-loop 1</code> travaria o ffmpeg.",
+        "<b>Título:</b> <code>drawtext</code> com <code>textfile</code> (quebras de linha reais). Em caixas de template, o worker mede o texto com PIL e a fonte real, quebra linhas, reduz a fonte até caber e centraliza o bloco na caixa.",
+        "<b>Rascunhos não levam legendas nem template</b>; o editor as simula no navegador, sincronizadas com o tempo do vídeo, para não duplicar legenda queimada."
+      ],
+      "refs": [
+        {"label": "write_ass_captions — SRT absoluto → ASS", "path": "vertical_render_function/renderer.py", "start": 523, "end": 551, "symbol": "def write_ass_captions"},
+        {"label": "build_overlay_filters — legendas, logo e títulos", "path": "vertical_render_function/renderer.py", "start": 432, "end": 513, "symbol": "def build_overlay_filters"},
+        {"label": "_layout_title_box — quebra e ajuste do título", "path": "vertical_render_function/renderer.py", "start": 331, "end": 368, "symbol": "def _layout_title_box"},
+        {"label": "app: cues absolutos e conversão de % para pixels", "path": "app/services/processing.py", "start": 398, "end": 450, "symbol": "chapter_start = float"},
+        {"label": "app: captions só nos finais", "path": "app/services/processing.py", "start": 471, "end": 473, "symbol": "\"captions\": captions if final else []"},
+        {"label": "UI: simulação de legendas no editor", "path": "app/templates/video_detail.html", "start": 92, "end": 93, "symbol": "function parseCues"}
+      ]
+    },
+    {
+      "id": "review", "title": "Revisão humana", "status": ["PENDING_REVIEW"], "who": ["user", "app"],
+      "summary": "No estado <code>PENDING_REVIEW</code> o usuário (ou um cliente da API) ajusta os capítulos, pede novos previews e escolhe templates. Nada é aprovado até a chamada de aprovação.",
+      "facts": [
+        "<b>Interface:</b> a página consulta <code>GET /api/video/{id}</code> periodicamente; cada capítulo vem com URLs assinadas (60 min) para rascunho, final e horizontal. Edições de título/limites/template usam <code>PUT /chapters/{id}</code>.",
+        "<b>Limites mudaram → novo rascunho:</b> se <code>start/end</code> mudam e o pipeline não está ocupado (<code>_can_render_draft</code>), um novo rascunho é reagendado reaproveitando as opções salvas (modo e âncoras são preservados).",
+        "<b>Opções do editor sem render:</b> <code>render_options</code> dentro do <code>PUT</code> persiste modo, âncoras e estilo de legenda sem renderizar; branding e artefatos do worker são preservados.",
+        "<b>Novo preview:</b> <code>POST /chapters/{id}/render</code> grava as opções e agenda <code>render_chapter</code>; em rascunhos o branding é sempre limpo (o template só é aplicado na aprovação). O editor mostra um spinner e consulta a cada 30 s até o novo rascunho ficar pronto.",
+        "<b>Adicionar/excluir/regenerar:</b> capítulos manuais ganham rascunho automático; <code>regenerate-chapters</code> apaga todos e recria a partir do SRT atual."
+      ],
+      "refs": [
+        {"label": "GET /api/video/{id} — vídeo, capítulos e URLs assinadas", "path": "app/routers/api.py", "start": 593, "end": 619, "symbol": "async def video_detail"},
+        {"label": "PUT /chapters/{id} — salva revisão e reagenda o rascunho", "path": "app/routers/api.py", "start": 647, "end": 701, "symbol": "async def update_chapter"},
+        {"label": "_can_render_draft — condição para renderizar", "path": "app/routers/api.py", "start": 704, "end": 715, "symbol": "def _can_render_draft"},
+        {"label": "POST /chapters — adicionar capítulo", "path": "app/routers/api.py", "start": 718, "end": 754, "symbol": "async def add_chapter"},
+        {"label": "POST /chapters/{id}/render — novo preview", "path": "app/routers/api.py", "start": 814, "end": 868, "symbol": "async def queue_render"},
+        {"label": "UI: load() e polling da página", "path": "app/templates/video_detail.html", "start": 59, "end": 59, "symbol": "async function load"},
+        {"label": "UI: observação do novo preview (spinner + 30 s)", "path": "app/templates/video_detail.html", "start": 84, "end": 84, "symbol": "function startPreviewWatch"},
+        {"label": "UI: requestRender — dispara o novo preview", "path": "app/templates/video_detail.html", "start": 97, "end": 97, "symbol": "async function requestRender"},
+        {"label": "UI: ancoras do editor manual (recordKeyframes)", "path": "app/templates/video_detail.html", "start": 121, "end": 121, "symbol": "function recordKeyframes"}
+      ]
+    },
+    {
+      "id": "approve", "title": "Aprovação e renders finais", "status": ["RENDERING_FINALS"], "who": ["app", "render"],
+      "summary": "A aprovação resolve o template de cada capítulo, trava o vídeo e dispara os renders finais em série.",
+      "io": {"in": "<code>{chapter_ids, template_ids}</code>.", "out": "<code>final_*.mp4</code> verticais com legendas e template, mais o corte horizontal; vídeo em <code>COMPLETED</code> ou <code>ERROR</code>."},
+      "facts": [
+        "<b>Pré-condição:</b> só aprova com <code>status=PENDING_REVIEW</code> e sem <code>approved_at</code> (<code>409</code> caso contrário).",
+        "<b>Resolução do template (por capítulo):</b> id explícito &gt; <code>\"none\"</code> (sem template, escolha persistente) &gt; template padrão (<code>is_default</code>). O template é copiado como <i>snapshot</i> para o capítulo, então edições posteriores não alteram finais já aprovados.",
+        "<b>Branding:</b> <code>_template_branding</code> substitui <code>{chapter_title}</code>/<code>{video_title}</code> no título e completa a geometria padrão de logos/títulos de templates antigos.",
+        "<b>Trava antes do disparo:</b> o estado <code>RENDERING_FINALS</code> e <code>approved_chapter_ids</code> são gravados <i>antes</i> de agendar <code>render_final_chapters</code>, evitando renders duplicados por cliques/chamadas concorrentes.",
+        "<b>Render final:</b> usa as <code>render_options</code> do capítulo (modo, âncoras, estilo) com <code>final=true</code> — agora com legendas e branding — e reaproveita o plano de câmera do rascunho. Os capítulos rodam em série; se algum falhar, o vídeo vai a <code>ERROR</code> e <code>retry-finals</code> refaz apenas os que não concluíram."
+      ],
+      "refs": [
+        {"label": "POST /approve — resolve templates, trava e agenda", "path": "app/routers/api.py", "start": 871, "end": 959, "symbol": "async def approve"},
+        {"label": "_approval_block_reason — pré-condições", "path": "app/routers/api.py", "start": 65, "end": 75, "symbol": "def _approval_block_reason"},
+        {"label": "_template_branding — macros e geometria", "path": "app/routers/api.py", "start": 78, "end": 107, "symbol": "def _template_branding"},
+        {"label": "_resolve_template_choice — explícito, none ou padrão", "path": "app/routers/api.py", "start": 366, "end": 375, "symbol": "def _resolve_template_choice"},
+        {"label": "render_final_chapters — lote de finais", "path": "app/services/processing.py", "start": 656, "end": 698, "symbol": "def render_final_chapters"},
+        {"label": "POST /retry-finals — refaz só os finais com falha", "path": "app/routers/api.py", "start": 1022, "end": 1052, "symbol": "async def retry_final_renders"}
+      ]
+    },
+    {
+      "id": "horizontal", "title": "Corte horizontal 16:9", "status": ["RENDERING_FINALS"], "who": ["app"],
+      "summary": "Depois de cada final vertical bem-sucedido, o app gera um corte horizontal 1920×1080 com os mesmos instantes de início e fim.",
+      "params": [
+        ["Fonte", "<code>gcs_high_path</code> (ou, na falta, <code>gcs_source_path</code>) baixado para um diretório temporário"],
+        ["Corte", "<code>-ss start -to end</code> com <b>re-encode</b> (<code>-c copy</code> pararia em GOPs e perderia precisão de quadro)"],
+        ["Filtro", "<code>scale=1920:1080:force_original_aspect_ratio=decrease,pad=…,setsar=1</code> — saída sempre 1920×1080"],
+        ["Codec", "<code>libx264 -preset veryfast -crf 20</code>, AAC 160 kb/s, <code>+faststart</code>"],
+        ["Destino", "<code>{video}/chapters/{chapter}/horizontal_{render_id}.mp4</code>"]
+      ],
+      "facts": [
+        "Roda <b>dentro do guarda do render mais recente</b>: finais superados não geram cortes obsoletos.",
+        "Uma falha aqui <b>não invalida</b> o final vertical: grava <code>horizontal_status=ERROR</code> e <code>horizontal_error</code>."
+      ],
+      "refs": [
+        {"label": "_render_horizontal_cut — ffmpeg do corte 16:9", "path": "app/services/processing.py", "start": 305, "end": 355, "symbol": "def _render_horizontal_cut"},
+        {"label": "integração após o final vertical (estado + erro isolado)", "path": "app/services/processing.py", "start": 567, "end": 589, "symbol": "_render_horizontal_cut(video, chapter"}
+      ]
+    },
+    {
+      "id": "concurrency", "title": "Concorrência, resiliência e fallbacks", "status": [], "who": ["app", "render"],
+      "summary": "O pipeline foi desenhado para tolerar cliques repetidos, renders em paralelo e falhas parciais sem corromper o estado visível.",
+      "facts": [
+        "<b>Render mais recente vence:</b> cada render tem um <code>render_id</code>. Ao terminar, o app relê o capítulo e só atualiza <code>draft/final_*</code> se o id ainda for o do capítulo; renders superados registram sua conclusão em <code>renders/</code> sem sobrescrever o que o usuário vê.",
+        "<b>Falha de render:</b> grava <code>renders/{id}.error</code>; só o render mais recente marca o capítulo como <code>ERROR</code>. O erro sempre é relançado para o chamador.",
+        "<b>Retentativas de rede</b> no cliente do worker (2× com 10 s/30 s); <b>fallback de encoder</b> (NVENC → libx264) tanto no transcode quanto no v10; <b>fallback de enquadramento</b> (v10 → recorte central determinístico).",
+        "<b>Estado durável:</b> cada etapa persiste antes de avançar; <code>retry</code> e <code>retry-finals</code> retomam sem refazer o que já existe.",
+        "<b>Botões não repetíveis:</b> a interface desabilita ações assíncronas (render, salvar, adicionar) até a resposta — a trava do servidor (<code>approved_at</code>) é a segunda linha de defesa.",
+        "<b>Segurança:</b> workers com <code>X-API-Key</code> e comparação em tempo constante, falha fechada sem segredo; caminhos de GCS validados (sem <code>..</code>, <code>gs://</code> ou <code>/</code>); ffmpeg sempre por lista de argumentos, nunca shell."
+      ],
+      "refs": [
+        {"label": "guarda do render mais recente (sucesso)", "path": "app/services/processing.py", "start": 546, "end": 566, "symbol": "fresh = chapter_ref.get().to_dict()"},
+        {"label": "tratamento de falha e relançamento", "path": "app/services/processing.py", "start": 614, "end": 653, "symbol": "except Exception as exc"},
+        {"label": "fallback NVENC → libx264 no transcode", "path": "transcode_function/processor.py", "start": 203, "end": 216, "symbol": "encoder_used"},
+        {"label": "fallback de encoder no v10", "path": "vertical_render_function/autoframe_v10/render.py", "start": 224, "end": 247, "symbol": "attempts = "},
+        {"label": "fallback v10 → recorte central determinístico", "path": "vertical_render_function/main.py", "start": 327, "end": 332, "symbol": "recorte central determin"},
+        {"label": "autenticação dos workers (falha fechada)", "path": "vertical_render_function/main.py", "start": 103, "end": 106, "symbol": "def _authorized"}
+      ]
+    },
+    {
+      "id": "delivery", "title": "Entrega e limpeza", "status": ["COMPLETED"], "who": ["app"],
+      "summary": "Os arquivos ficam privados no GCS; o app entrega URLs assinadas (V4) de curta duração.",
+      "facts": [
+        "<b>Download:</b> <code>GET …/chapters/{c}/{draft|final|horizontal}/download</code> responde <code>307</code> para uma URL assinada de 60 min; <code>GET /api/video/{id}</code> inclui <code>*_preview_url</code> (60 min) e <code>source-url</code> assina o vídeo de origem por 240 min.",
+        "<b>Assinatura:</b> com chave de serviço local usa o JSON; no Cloud Run assina via IAM <code>signBlob</code> (token da conta de serviço).",
+        "<b>Exclusão:</b> <code>DELETE /api/video/{id}</code> remove renders, capítulos e todo o prefixo <code>{video_id}/</code> do bucket."
+      ],
+      "refs": [
+        {"label": "download — redireciona para URL assinada", "path": "app/routers/api.py", "start": 962, "end": 972, "symbol": "async def download_render"},
+        {"label": "signed_url — URL V4 (chave local ou IAM)", "path": "app/services/storage.py", "start": 79, "end": 100, "symbol": "def signed_url"},
+        {"label": "DELETE vídeo — Firestore + storage", "path": "app/routers/api.py", "start": 1055, "end": 1068, "symbol": "async def delete_video"},
+        {"label": "delete_prefix", "path": "app/services/storage.py", "start": 103, "end": 107, "symbol": "def delete_prefix"}
+      ]
+    },
+    {
+      "id": "data", "title": "Modelo de dados e layout no GCS", "status": [], "who": ["app"],
+      "summary": "Onde cada informação mora.",
+      "tables": [
+        {"title": "Firestore", "head": ["Caminho", "Conteúdo"], "rows": [
+          ["<code>vertical_cuts_videos/{video_id}</code>", "status, título, origem, <code>gcs_source_path</code>, <code>gcs_high_path</code>, <code>gcs_audio_chunks</code>, <code>duration_seconds</code>, <code>video_resolution</code>, <code>subtitle_text</code>, <code>approved_*</code>, <code>error</code>"],
+          ["<code>…/chapters/{chapter_id}</code>", "título, limites, <code>subtitle_text</code> (relativo), <code>draft_*</code>/<code>final_*</code>/<code>horizontal_*</code> (status, render_id, gcs_path, erro), <code>render_options</code>, <code>template_*</code>"],
+          ["<code>…/chapters/{c}/renders/{render_id}</code>", "um documento por render: tipo, status, opções, <code>gcs_path</code>, timestamps"],
+          ["<code>…/events/{auto}</code>", "histórico estruturado (stage, action, message, details)"],
+          ["<code>vertical_cuts_templates</code>, <code>vertical_cuts_prompts</code>, <code>vertical_cuts_allowed_emails</code>", "templates, prompts editados, allowlist de e-mails"]
+        ]},
+        {"title": "Cloud Storage", "head": ["Objeto", "Conteúdo"], "rows": [
+          ["<code>{id}/{id}_source.ext</code>", "arquivo original enviado/importado"],
+          ["<code>{id}/{id}_high.mp4</code>", "H.264/AAC ≤ 1080p normalizado (fonte de todos os renders)"],
+          ["<code>{id}/audio/chunk_NNN.flac</code>", "áudio mono 16 kHz em blocos de 600 s"],
+          ["<code>{id}/{id}.srt</code>", "legenda canônica do vídeo"],
+          ["<code>{id}/chapters/{c}/{draft|final}_xxxxxxxxxx.mp4</code>", "renders verticais 1080×1920"],
+          ["<code>{id}/chapters/{c}/horizontal_{render_id}.mp4</code>", "corte 16:9"],
+          ["<code>{id}/chapters/{c}/autoframe/v10/{fingerprint}.plan.json.gz</code>", "plano de câmera reutilizável"],
+          ["<code>templates/{id}/logo.ext</code>, <code>{id}/branding/…</code>", "logos"],
+          ["<code>imports/s3/{bucket}/{hash}/…</code>", "cópia intermediária da importação S3 (apagada após a API responder)"]
+        ]}
+      ],
+      "refs": [
+        {"label": "Settings — coleções, limites e flags", "path": "app/config.py", "start": 9, "end": 64, "symbol": "class Settings"},
+        {"label": "ChapterInput — contrato de edição de capítulo", "path": "app/models.py", "start": 151, "end": 170, "symbol": "class ChapterInput"}
+      ]
+    }
+  ]
+}
+</script>
+
+<script>
+(function(){
+const DATA=JSON.parse(document.getElementById('doc-data').textContent);
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+const WHO={app:'App (FastAPI)',transcode:'Worker de transcode',chirp:'Speech-to-Text',gemini:'Gemini',render:'Worker vertical',user:'Usuário',pubsub:'Pub/Sub',functions:'Cloud Functions'};
+const store={get:(k,d)=>{try{return localStorage.getItem(k)||d}catch(e){return d}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}};
+let refMode=store.get('docs.ref','commit');
+const ref=()=>refMode==='commit'?DATA.commit:DATA.branch;
+const ghUrl=r=>`${DATA.repo}/blob/${ref()}/${r.path}#L${r.start}${r.end>r.start?'-L'+r.end:''}`;
+const rawUrl=r=>`https://raw.githubusercontent.com/${DATA.repo.split('github.com/')[1]}/${ref()}/${r.path}`;
+const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const snipCache={};
+
+/* ---------- tema e ref ---------- */
+const root=document.documentElement;
+root.dataset.theme=store.get('docs.theme',matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');
+$('#theme').onclick=()=>{root.dataset.theme=root.dataset.theme==='dark'?'light':'dark';store.set('docs.theme',root.dataset.theme)};
+$('#refsel').value=refMode;
+function refLine(){$('#refline').textContent=`Referência dos links: ${refMode==='commit'?'commit '+DATA.commit.slice(0,10):'branch '+DATA.branch}`}
+$('#repolink').href=DATA.repo;$('#repolink').textContent=DATA.repo.replace('https://','');
+$('#refsel').onchange=e=>{refMode=e.target.value;store.set('docs.ref',refMode);refLine();updateLinks()};
+refLine();
+
+/* ---------- fluxo de estados ---------- */
+const flow=$('#flow');
+DATA.states.forEach((s,i)=>{
+  if(i)flow.insertAdjacentHTML('beforeend','<span class="arrow">→</span>');
+  const n=document.createElement('div');n.className='node'+(s.who==='user'?' user':'');n.dataset.id=s.id;
+  n.innerHTML=`${esc(s.label)}<b>${esc(WHO[s.who]||s.who)}</b>`;
+  n.onclick=()=>{highlight(s.id);openStage(s.stage,true)};
+  n.title=s.text;flow.appendChild(n);
+});
+function highlight(id){$$('.node',flow).forEach(n=>n.classList.toggle('on',n.dataset.id===id));const s=DATA.states.find(x=>x.id===id);$('#playinfo').textContent=s?`${s.label}: ${s.text}`:''}
+let timer=null;
+$('#play').onclick=()=>{
+  if(timer){clearInterval(timer);timer=null;$('#play').textContent='▶ Reproduzir o fluxo de estados';return}
+  let i=0;$('#play').textContent='■ Parar';highlight(DATA.states[0].id);
+  timer=setInterval(()=>{i++;if(i>=DATA.states.length){clearInterval(timer);timer=null;$('#play').textContent='▶ Reproduzir o fluxo de estados';return}highlight(DATA.states[i].id)},1400);
+};
+
+/* ---------- estágios ---------- */
+const stagesEl=$('#stages'),toc=$('#toc');
+function refItem(r){
+  const li=document.createElement('li');li.className='ref';
+  li.innerHTML=`<div class="ref-row"><div class="lbl">${esc(r.label)}<small class="mono">${esc(r.path)} · L${r.start}${r.end>r.start?'–'+r.end:''}</small></div><button type="button">Ver trecho</button><a class="gh" target="_blank" rel="noopener">GitHub ↗</a></div>`;
+  const a=$('a.gh',li);a.href=ghUrl(r);a._r=r;
+  const btn=$('button',li);
+  btn.onclick=async()=>{
+    const open=$('pre.snip',li);if(open){open.remove();btn.textContent='Ver trecho';return}
+    btn.textContent='Carregando…';
+    const pre=document.createElement('pre');pre.className='snip';li.appendChild(pre);
+    const sources=[{url:rawUrl(r),label:'GitHub'}];
+    if(location.protocol.startsWith('http'))sources.push({url:'../'+r.path,label:'arquivo local (árvore de trabalho; pode diferir do commit fixo)'});
+    let lastErr='sem fonte disponível',loaded=false;
+    for(const src of sources){
+      try{
+        if(!snipCache[src.url]){const res=await fetch(src.url);if(!res.ok)throw new Error('HTTP '+res.status);snipCache[src.url]=(await res.text()).split('\n')}
+        const lines=snipCache[src.url].slice(r.start-1,r.end);
+        pre.innerHTML=(src.label==='GitHub'?'':`<span class="ln"></span><i>fonte: ${esc(src.label)}</i>\n`)+lines.map((l,i)=>`<span class="ln">${r.start+i}</span>${esc(l)}`).join('\n');
+        btn.textContent='Ocultar trecho';loaded=true;break;
+      }catch(err){lastErr=err.message}
+    }
+    if(!loaded){
+      pre.innerHTML=`Não foi possível carregar o trecho (${esc(lastErr)}). Se o repositório for privado, o GitHub só serve o código a quem está autenticado — use o link <b>GitHub ↗</b>, ou sirva esta página a partir da raiz do repositório (<code>python3 -m http.server</code> e abra <code>/docs/</code>) para ler os arquivos locais aqui mesmo.`;
+      btn.textContent='Ocultar';
+    }
+  };
+  return li;
+}
+function refList(refs){const ul=document.createElement('ul');ul.className='refs';refs.forEach(r=>ul.appendChild(refItem(r)));return ul}
+function updateLinks(){$$('a.gh').forEach(a=>a.href=ghUrl(a._r));$$('pre.snip').forEach(p=>p.remove());$$('.ref button').forEach(b=>b.textContent='Ver trecho')}
+
+DATA.stages.forEach((s,idx)=>{
+  const d=document.createElement('details');d.className='stage';d.id=s.id;d.open=idx<1;
+  const chips=[...(s.status||[]).map(x=>`<span class="chip st">${esc(x)}</span>`),...(s.who||[]).map(x=>`<span class="chip who">${esc(WHO[x]||x)}</span>`)].join('');
+  d.innerHTML=`<summary class="stage-head"><span class="num">${idx+1}</span><h3>${esc(s.title)}</h3><span class="chips">${chips}</span><span class="caret">▸</span></summary><div class="body"></div>`;
+  const b=$('.body',d);
+  b.insertAdjacentHTML('beforeend',`<p>${s.summary}</p>`);
+  if(s.io)b.insertAdjacentHTML('beforeend',`<div class="io"><div><b>Entrada</b>${s.io.in}</div><div><b>Saída</b>${s.io.out}</div></div>`);
+  if(s.params){b.insertAdjacentHTML('beforeend','<h4>Parâmetros</h4>');b.insertAdjacentHTML('beforeend',`<table class="t">${s.params.map(p=>`<tr><th style="width:170px">${p[0]}</th><td>${p[1]}</td></tr>`).join('')}</table>`)}
+  if(s.facts){b.insertAdjacentHTML('beforeend','<h4>Como funciona</h4>');b.insertAdjacentHTML('beforeend',`<ul>${s.facts.map(f=>`<li>${f}</li>`).join('')}</ul>`)}
+  if(s.tabs){
+    const bar=document.createElement('div');bar.className='tabs';const panes=document.createElement('div');
+    s.tabs.forEach((t,i)=>{
+      const bt=document.createElement('button');bt.type='button';bt.textContent=t.title;bt.className=i?'':'on';bar.appendChild(bt);
+      const p=document.createElement('div');p.className='tabpane'+(i?'':' on');p.innerHTML=t.html;if(t.refs)p.appendChild(refList(t.refs));panes.appendChild(p);
+      bt.onclick=()=>{$$('button',bar).forEach(x=>x.classList.toggle('on',x===bt));$$('.tabpane',panes).forEach(x=>x.classList.toggle('on',x===p))};
+    });
+    b.appendChild(bar);b.appendChild(panes);
+  }
+  (s.tables||[]).forEach(t=>{b.insertAdjacentHTML('beforeend',`<h4>${esc(t.title)}</h4><table class="t"><tr>${t.head.map(h=>`<th>${h}</th>`).join('')}</tr>${t.rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</table>`)});
+  if(s.refs&&s.refs.length){b.insertAdjacentHTML('beforeend','<h4>Código no GitHub</h4>');b.appendChild(refList(s.refs))}
+  stagesEl.appendChild(d);
+  const a=document.createElement('a');a.href='#'+s.id;a.textContent=`${idx+1}. ${s.title}`;a.dataset.id=s.id;
+  a.onclick=e=>{e.preventDefault();openStage(s.id,true)};toc.appendChild(a);
+  s._text=(d.textContent||'').toLowerCase();
+});
+function openStage(id,scroll){const d=document.getElementById(id);if(!d)return;d.open=true;if(scroll)d.scrollIntoView({behavior:'smooth',block:'start'});history.replaceState(null,'','#'+id)}
+$('#expand').onclick=()=>$$('details.stage').forEach(d=>d.open=true);
+$('#collapse').onclick=()=>$$('details.stage').forEach(d=>d.open=false);
+if(location.hash)openStage(location.hash.slice(1),false);
+
+/* ---------- scrollspy ---------- */
+const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){$$('#toc a').forEach(a=>a.classList.toggle('active',a.dataset.id===e.target.id));const st=DATA.states.find(x=>x.stage===e.target.id);if(st&&!timer)highlight(st.id)}})},{rootMargin:'-80px 0px -65% 0px'});
+$$('details.stage').forEach(d=>io.observe(d));
+
+/* ---------- busca ---------- */
+$('#q').addEventListener('input',e=>{
+  const q=e.target.value.trim().toLowerCase();
+  $$('details.stage').forEach(d=>{
+    const s=DATA.stages.find(x=>x.id===d.id),hit=q&&s._text.includes(q);
+    d.classList.toggle('hit',Boolean(hit));
+    $(`#toc a[data-id="${d.id}"]`).classList.toggle('hidden',Boolean(q)&&!hit);
+    if(hit)d.open=true;
+  });
+});
+
+/* ---------- widget: geometria do crop (plan.crop_size_for + plan_segment_path) ---------- */
+(function(){
+  const host=$('#w-crop');if(!host)return;
+  host.innerHTML=`<h5>Simulador do crop 9:16 (mesma matemática de <code>crop_size_for</code> e <code>plan_segment_path</code>)</h5>
+  <div class="row"><canvas id="cv" width="480" height="270"></canvas><div style="flex:1;min-width:230px">
+  <label class="sl">Largura da fonte (W): <b id="vW">1920</b><input id="iW" type="range" min="640" max="3840" step="2" value="1920"></label>
+  <label class="sl">Altura da fonte (H): <b id="vH">1080</b><input id="iH" type="range" min="360" max="2160" step="2" value="1080"></label>
+  <label class="sl">Altura do rosto: <b id="vF">150</b> px<input id="iF" type="range" min="20" max="900" value="150"></label>
+  <label class="sl">Centro X do rosto: <b id="vX">50</b>%<input id="iX" type="range" min="0" max="100" value="50"></label>
+  <label class="sl">Centro Y do rosto: <b id="vY">38</b>%<input id="iY" type="range" min="0" max="100" value="38"></label>
+  <div class="out" id="co"></div></div></div>
+  <p class="out">Parâmetros: <code>zoom_factor=3,2</code>, <code>min_crop_h_ratio=0,55</code>, <code>headroom=0,42</code>, saída 1080×1920 (9:16). Arraste os controles; o retângulo amarelo é o recorte que o planejador escolheria para um segmento estático.</p>`;
+  const g=id=>host.querySelector('#'+id),cv=g('cv'),c=cv.getContext('2d');
+  const clip=(v,a,b)=>Math.min(b,Math.max(a,v));
+  function draw(){
+    const W=+g('iW').value,H=+g('iH').value,fh=+g('iF').value,cx=W*g('iX').value/100,cy=H*g('iY').value/100;
+    g('vW').textContent=W;g('vH').textContent=H;g('vF').textContent=fh;g('vX').textContent=g('iX').value;g('vY').textContent=g('iY').value;
+    const ar=1080/1920;let ch=clip(fh*3.2,0.55*H,H),cw=ch*ar;if(cw>W){cw=W;ch=W/ar}
+    const x=clip(cx-cw/2,0,W-cw),y=clip(cy-ch*0.42,0,H-ch);
+    const sc=Math.min(cv.width/W,cv.height/H);cv.width=Math.round(W*sc);cv.height=Math.round(H*sc);
+    c.fillStyle='#1b2a44';c.fillRect(0,0,cv.width,cv.height);
+    c.fillStyle='#2b3e63';for(let i=0;i<cv.width;i+=24)c.fillRect(i,0,1,cv.height);
+    c.fillStyle='#e8c9a0';const r=fh*sc/2;c.beginPath();c.ellipse(cx*sc,cy*sc,r*0.8,r,0,0,7);c.fill();
+    c.strokeStyle='#ffd24a';c.lineWidth=2;c.strokeRect(x*sc,y*sc,cw*sc,ch*sc);
+    c.fillStyle='rgba(0,0,0,.45)';c.fillRect(0,0,cv.width,y*sc);c.fillRect(0,(y+ch)*sc,cv.width,cv.height-(y+ch)*sc);c.fillRect(0,y*sc,x*sc,ch*sc);c.fillRect((x+cw)*sc,y*sc,cv.width-(x+cw)*sc,ch*sc);
+    g('co').innerHTML=`Crop: <b>${cw.toFixed(0)}×${ch.toFixed(0)}</b> px em (<b>${x.toFixed(0)}</b>, <b>${y.toFixed(0)}</b>) · ampliação ao escalar para 1080×1920: <b>${(1080/cw).toFixed(2)}×</b>${ch>=H-0.5?' · <i>limitado pela altura da fonte</i>':ch<=0.55*H+0.5?' · <i>limitado pelo mínimo de 55 % da altura</i>':''}`;
+  }
+  host.querySelectorAll('input').forEach(i=>i.oninput=draw);draw();
+})();
+
+/* ---------- widget: o que invalida o plano reutilizável ---------- */
+(function(){
+  const host=$('#w-fp');if(!host)return;
+  const items=[
+    ['Mudar início/fim do capítulo',true,'<code>trim_start/trim_end</code> fazem parte do fingerprint'],
+    ['Substituir o arquivo de origem (nova generation)',true,'<code>source_generation</code> está no fingerprint'],
+    ['Alterar uma constante do detector/planejador (ex.: <code>zoom_factor</code>)',true,'28 constantes entram no fingerprint'],
+    ['Trocar os pesos do YOLO ou do LR-ASD',true,'checksums SHA-256 dos modelos entram no fingerprint'],
+    ['Mudar o estilo da legenda (cor, tamanho, posição)',false,'legendas não afetam o enquadramento'],
+    ['Trocar de template / logo / título',false,'branding é aplicado depois, no mesmo encode'],
+    ['Trocar encoder ou dispositivo (CPU ↔ GPU)',false,'<code>device</code>/<code>encoder</code> alteram a velocidade, não o plano'],
+    ['Aprovar (rascunho → final)',false,'é exatamente o caso de reuso: o final repete o enquadramento aprovado']
+  ];
+  host.innerHTML=`<h5>Explorador: o plano de câmera do rascunho será reutilizado no final?</h5>
+  ${items.map((it,i)=>`<label><input type="checkbox" data-i="${i}"><span>${it[0]}<br><small style="color:var(--muted)">${it[2]}</small></span></label>`).join('')}
+  <div class="verdict ok" id="fpv"></div>`;
+  function upd(){
+    const bad=[...host.querySelectorAll('input:checked')].filter(i=>items[+i.dataset.i][1]);
+    const v=host.querySelector('#fpv');
+    if(bad.length){v.className='verdict bad';v.textContent=`Plano NÃO reutilizado — o worker reanalisa (${bad.length} fator${bad.length>1?'es':''} no fingerprint).`}
+    else{v.className='verdict ok';v.textContent='Plano reutilizado — o final repete o enquadramento do rascunho sem reanalisar.'}
+  }
+  host.querySelectorAll('input').forEach(i=>i.onchange=upd);upd();
+})();
+})();
+</script>
+</body>
+</html>

@@ -53,6 +53,10 @@ A interface está em português brasileiro, é responsiva e usa somente a marca 
 
 Não existe servidor de livestream neste projeto.
 
+## Documentação técnica interativa
+
+[`docs/index.html`](docs/index.html) explica passo a passo como o vídeo é processado (entrada, transcode, Chirp 3, Gemini, rascunhos, autoframe v10, aprovação, corte horizontal) com links para as linhas exatas no GitHub. Abra o arquivo no navegador ou, para ler os trechos de código dentro da própria página, rode `python3 -m http.server` na raiz do repositório e acesse `http://localhost:8000/docs/`. O teste `tests/test_docs_links.py` valida cada link contra o commit fixado na página.
+
 ## Fluxo e estados
 
 ```text
