@@ -1,0 +1,4 @@
+boto3==1.37.18
+functions-framework==3.8.3
+google-cloud-storage==3.1.0
+requests==2.32.3

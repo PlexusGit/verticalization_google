@@ -310,7 +310,7 @@ Principais endpoints:
 | `DELETE` | `/api/video/{id}` | excluir vídeo e artefatos |
 | `GET` | `/health` | health check público |
 
-A documentação OpenAPI fica em `/docs`.
+A documentação OpenAPI fica em `/docs`. Para o passo a passo de uso apenas pela API (envio, revisão, aprovação e download), veja [API_GUIDE.md](API_GUIDE.md).
 
 ## Contratos Pub/Sub
 
