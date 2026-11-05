@@ -1,0 +1,6 @@
+# Model binaries are stored in Git LFS. Install git-lfs before cloning or
+# pulling (`brew install git-lfs && git lfs install`) — the render worker image
+# build validates the real checksums, so a clone that left pointer files
+# behind fails fast instead of deploying broken models.
+vertical_render_function/models/*.pt filter=lfs diff=lfs merge=lfs -text
+vertical_render_function/third_party/**/*.model filter=lfs diff=lfs merge=lfs -text

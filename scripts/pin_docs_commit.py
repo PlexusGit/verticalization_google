@@ -22,13 +22,15 @@ def git(*args: str) -> str:
 
 def main() -> int:
     head = git("rev-parse", "HEAD").strip()
-    if git("status", "--porcelain", "--untracked-files=no").strip():
-        print("Commit (or stash) your changes first: links are verified against HEAD.", file=sys.stderr)
-        return 1
     text = HTML.read_text()
     match = re.search(r'(<script type="application/json" id="doc-data">)(.*?)(</script>)', text, re.S)
     data = json.loads(match.group(2))
     refs = [ref for stage in data["stages"] for ref in [*stage.get("refs", []), *(r for tab in stage.get("tabs", []) for r in tab.get("refs", []))]]
+    # Only the files the page links to must match HEAD; unrelated local changes are fine.
+    dirty = sorted({ref["path"] for ref in refs if git("status", "--porcelain", "--", ref["path"]).strip()})
+    if dirty:
+        print("Commit these linked files first (links are verified against HEAD):\n  " + "\n  ".join(dirty), file=sys.stderr)
+        return 1
     problems = []
     for ref in refs:
         blob = subprocess.run(["git", "show", f"{head}:{ref['path']}"], cwd=ROOT, capture_output=True, text=True)

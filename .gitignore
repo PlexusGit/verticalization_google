@@ -17,3 +17,5 @@ build/
 dist/
 *.egg-info/
 plexus-vertical-cuts-*.json
+*.mp4
+example_face_detection.py
