@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from google.cloud import firestore
 
 from app.main import app
 from app.models import VideoStatus
@@ -292,4 +293,45 @@ def test_retry_finals_rejects_non_error_video(monkeypatch):
     monkeypatch.setattr(api, "_video_snapshot", lambda _video_id: Video())
 
     response = client.post("/api/video/v_test/retry-finals")
+    assert response.status_code == 409
+
+
+def test_retry_video_resets_status_and_clears_error_fields(monkeypatch):
+    """Retry must remove the stale error so the UI's error panel disappears."""
+
+    class VideoRef:
+        def __init__(self): self.updated = {}
+        def update(self, data): self.updated = data
+
+    class Video:
+        exists = True
+        def __init__(self): self.reference = VideoRef()
+        def to_dict(self):
+            return {"status": VideoStatus.ERROR.value, "error": "Cannot send a request, as the client has been closed."}
+
+    video = Video()
+    monkeypatch.setattr(api, "_unauthorized", lambda _request: None)
+    monkeypatch.setattr(api, "_video_snapshot", lambda _video_id: video)
+    dispatched = []
+    monkeypatch.setattr(api, "process_video", lambda vid: dispatched.append(vid))
+
+    response = client.post("/api/video/v_test/retry")
+
+    assert response.status_code == 202
+    update = video.reference.updated
+    assert update["status"] == VideoStatus.TRANSCODING.value
+    assert update["error"] is firestore.DELETE_FIELD
+    assert update["error_type"] is firestore.DELETE_FIELD
+    assert dispatched == ["v_test"]
+
+
+def test_retry_video_rejects_non_error_status(monkeypatch):
+    class Video:
+        exists = True
+        def to_dict(self): return {"status": VideoStatus.TRANSCRIBING.value}
+
+    monkeypatch.setattr(api, "_unauthorized", lambda _request: None)
+    monkeypatch.setattr(api, "_video_snapshot", lambda _video_id: Video())
+
+    response = client.post("/api/video/v_test/retry")
     assert response.status_code == 409

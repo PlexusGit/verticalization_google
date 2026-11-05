@@ -1014,7 +1014,14 @@ async def retry_video(request: Request, video_id: str, background_tasks: Backgro
     current_status = (snapshot.to_dict() or {}).get("status")
     if current_status not in {VideoStatus.ERROR.value, VideoStatus.UPLOADING.value}:
         return JSONResponse({"error": "O vídeo não está em um estado que permita retry"}, status_code=409)
-    snapshot.reference.update({"status": VideoStatus.TRANSCODING.value, "updated_at": firestore.SERVER_TIMESTAMP})
+    snapshot.reference.update(
+        {
+            "status": VideoStatus.TRANSCODING.value,
+            "error": firestore.DELETE_FIELD,
+            "error_type": firestore.DELETE_FIELD,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+    )
     background_tasks.add_task(process_video, video_id)
     return JSONResponse({"status": "RETRYING"}, status_code=202)
 
