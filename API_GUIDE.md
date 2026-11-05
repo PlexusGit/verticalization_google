@@ -50,7 +50,7 @@ Qualquer etapa pode terminar em `ERROR`.
 | Etapa | O que acontece |
 |---|---|
 | `TRANSCODING` | Transcodifica o vídeo e extrai o áudio. |
-| `TRANSCRIBING` | Transcrição PT-BR (Chirp 3). Pulada se você enviou um SRT. |
+| `TRANSCRIBING` | Transcrição PT-BR (Gemini Transcribe, com Chirp 3 como fallback). Pulada se você enviou um SRT. |
 | `SUGGESTING` | O Gemini sugere capítulos a partir das legendas. |
 | `RENDERING_DRAFTS` | Um **rascunho** vertical (preview) é gerado para cada capítulo. |
 | `PENDING_REVIEW` | Aguardando você revisar/editar e **aprovar**. |

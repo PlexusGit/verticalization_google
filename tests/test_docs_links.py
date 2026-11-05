@@ -68,19 +68,43 @@ def test_page_structure_is_consistent():
 
 
 def test_every_link_matches_the_pinned_commit():
+    """Links into files unchanged since the pin are checked against the pin itself.
+
+    A file edited after the pin cannot be validated against it; those links are
+    checked against the working tree instead and reported as "pin needs refresh"
+    (run ``python scripts/pin_docs_commit.py`` after committing).
+    """
     data = _data()
     commit = data["commit"]
     if _git("cat-file", "-e", f"{commit}^{{commit}}") is None:
         pytest.skip(f"commit {commit[:10]} is not available locally (shallow clone?)")
-    problems = []
+    problems, stale_pin = [], []
     for where, ref in _all_refs(data):
         blob = _git("show", f"{commit}:{ref['path']}")
+        path = ROOT / ref["path"]
         if blob is None:
-            problems.append(f"{where}: {ref['path']} does not exist at {commit[:10]}")
+            if not path.exists():
+                problems.append(f"{where}: {ref['path']} does not exist at {commit[:10]} or in the working tree")
+            else:
+                stale_pin.append(f"{where}: {ref['path']} is new since {commit[:10]}")
+                if problem := _check(path.read_text(), ref, where):
+                    problems.append(problem)
+            continue
+        if path.exists() and path.read_text() != blob:
+            stale_pin.append(f"{where}: {ref['path']} changed since {commit[:10]}")
+            if problem := _check(path.read_text(), ref, where):
+                problems.append(problem)
             continue
         if problem := _check(blob, ref, where):
             problems.append(problem)
     assert not problems, "docs/index.html has stale references:\n" + "\n".join(problems)
+    if stale_pin:
+        warnings.warn(
+            f"docs/index.html pins {commit[:10]}, but {len(stale_pin)} linked file(s) changed since; "
+            "after committing run `python scripts/pin_docs_commit.py` so the GitHub permalinks match.",
+            UserWarning,
+            stacklevel=1,
+        )
 
 
 def test_working_tree_drift_is_reported_not_fatal():

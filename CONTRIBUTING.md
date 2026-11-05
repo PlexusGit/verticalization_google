@@ -18,7 +18,7 @@ O desenvolvimento local requer:
 - Docker para testar imagens de container ou deploys
 - Um projeto GCP com faturamento ativo para testes ponta a ponta na nuvem
 
-A aplicação usa Cloud Run, Cloud Functions Gen2, Firestore, Cloud Storage, Speech-to-Text v2, Gemini, Pub/Sub, Eventarc, Artifact Registry e Secret Manager. A maioria dos testes unitários não exige recursos de nuvem implantados.
+A aplicação usa Cloud Run, Cloud Functions Gen2, Firestore, Cloud Storage, Gemini (transcrição e capítulos), Speech-to-Text v2 (fallback Chirp 3), Pub/Sub, Eventarc, Artifact Registry e Secret Manager. A maioria dos testes unitários não exige recursos de nuvem implantados.
 
 ## Estrutura do repositório
 

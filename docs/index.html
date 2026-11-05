@@ -118,12 +118,12 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
 <script type="application/json" id="doc-data">
 {
   "repo": "https://github.com/PlexusGit/verticalization_google",
-  "commit": "344ceb05ac0263f285ee1dca4052b02a20576586",
+  "commit": "f2b7c39e4a8b12a6ab042c630a025b0a74d7034d",
   "branch": "main",
   "states": [
     {"id": "UPLOADING", "label": "UPLOADING", "who": "app", "stage": "intake", "text": "Registro criado; aguardando o arquivo de origem."},
-    {"id": "TRANSCODING", "label": "TRANSCODING", "who": "transcode", "stage": "transcode", "text": "Worker de transcode gera o MP4 H.264 normalizado e os blocos de áudio FLAC."},
-    {"id": "TRANSCRIBING", "label": "TRANSCRIBING", "who": "chirp", "stage": "transcribe", "text": "Speech-to-Text v2 (Chirp 3) transcreve cada bloco de áudio."},
+    {"id": "TRANSCODING", "label": "TRANSCODING", "who": "transcode", "stage": "transcode", "text": "Worker de transcode gera o MP4 H.264 normalizado e os blocos de áudio MP3."},
+    {"id": "TRANSCRIBING", "label": "TRANSCRIBING", "who": "transcribe", "stage": "transcribe", "text": "Gemini Transcribe (com Chirp 3 como fallback) transcreve cada bloco de áudio."},
     {"id": "SUGGESTING", "label": "SUGGESTING", "who": "gemini", "stage": "suggest", "text": "Gemini propõe capítulos a partir das legendas."},
     {"id": "RENDERING_DRAFTS", "label": "RENDERING_DRAFTS", "who": "render", "stage": "drafts", "text": "Um rascunho vertical (sem legendas/template) por capítulo."},
     {"id": "PENDING_REVIEW", "label": "PENDING_REVIEW", "who": "user", "stage": "review", "text": "Revisão humana: editar limites, enquadramento, legendas e template."},
@@ -187,8 +187,8 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         "<b>Rascunhos em série:</b> os capítulos são renderizados um a um; falhas são acumuladas e levantadas depois do laço (um capítulo ruim não impede os demais de renderizar, mas o vídeo termina em <code>ERROR</code>)."
       ],
       "refs": [
-        {"label": "process_video — todo o pipeline de pré-processamento", "path": "app/services/processing.py", "start": 96, "end": 302, "symbol": "def process_video"},
-        {"label": "_stage / _set_error — transições de estado e erro", "path": "app/services/processing.py", "start": 705, "end": 721, "symbol": "def _stage"},
+        {"label": "process_video — todo o pipeline de pré-processamento", "path": "app/services/processing.py", "start": 106, "end": 329, "symbol": "def process_video"},
+        {"label": "_stage / _set_error — transições de estado e erro", "path": "app/services/processing.py", "start": 732, "end": 748, "symbol": "def _stage"},
         {"label": "events.record — log estruturado + histórico durável", "path": "app/services/events.py", "start": 31, "end": 66, "symbol": "def record"},
         {"label": "VideoStatus — estados possíveis", "path": "app/models.py", "start": 53, "end": 62, "symbol": "class VideoStatus"},
         {"label": "POST /retry — retoma a partir de ERROR/UPLOADING", "path": "app/routers/api.py", "start": 1007, "end": 1019, "symbol": "async def retry_video"}
@@ -196,15 +196,16 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
     },
     {
       "id": "transcode", "title": "Transcode e extração de áudio", "status": ["TRANSCODING"], "who": ["transcode"],
-      "summary": "Um worker Cloud Run (Functions Framework + ffmpeg) baixa a origem, normaliza o vídeo para H.264/AAC de até 1080p e fatia o áudio em FLAC mono 16 kHz para o reconhecimento de fala.",
-      "io": {"in": "<code>{video_id, gcs_source_path, high_gcs_path}</code> via <code>POST /</code> com <code>X-API-Key</code> (timeout do cliente: 3600 s).", "out": "<code>high_gcs_path</code>, <code>gcs_audio_chunks[{path, offset_seconds}]</code>, <code>duration_seconds</code>, <code>resolution</code>, <code>video_encoder</code>."},
+      "summary": "Um worker Cloud Run (Functions Framework + ffmpeg) baixa a origem, normaliza o vídeo para H.264/AAC de até 1080p e fatia o áudio em MP3 mono 16 kHz para o reconhecimento de fala.",
+      "io": {"in": "<code>{video_id, gcs_source_path, high_gcs_path}</code> via <code>POST /</code> com <code>X-API-Key</code> (timeout do cliente: 3600 s).", "out": "<code>high_gcs_path</code>, <code>gcs_audio_chunks[{path, offset_seconds, end_seconds}]</code>, <code>duration_seconds</code>, <code>resolution</code>, <code>video_encoder</code>."},
       "params": [
         ["Escala", "<code>scale=-2:min(1080\\,ih)</code> — nunca amplia; largura par"],
         ["Codec (CPU)", "<code>libx264 -preset medium -crf 18</code>"],
         ["Codec (GPU)", "<code>h264_nvenc -preset p5 -tune hq -rc vbr -cq 19 -b:v 0</code>; se falhar, refaz com libx264"],
         ["Compatibilidade", "<code>-pix_fmt yuv420p -profile:v high -movflags +faststart</code>"],
         ["Áudio do vídeo", "AAC 192 kb/s, 48 kHz"],
-        ["Áudio p/ STT", "<code>-ac 1 -ar 16000 -c:a flac -f segment -segment_time 600</code> (blocos de 600 s)"],
+        ["Áudio p/ STT", "<code>-ac 1 -ar 16000 -c:a libmp3lame -b:a 64k -f segment -segment_time 600</code> (blocos de 600 s; <code>AUDIO_CHUNK_SECONDS</code> / <code>AUDIO_BITRATE</code>)"],
+        ["Offsets dos blocos", "lidos do <code>-segment_list</code> (CSV) do ffmpeg — início exato de cada bloco; sobras &lt; 0,5 s são descartadas"],
         ["Timeout", "<code>TRANSCODE_TIMEOUT_SECONDS</code> = 10 800 s por comando"]
       ],
       "facts": [
@@ -212,44 +213,52 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         "<b>Segurança de caminhos:</b> <code>video_id</code> só aceita <code>[A-Za-z0-9._-]</code>; caminhos de objeto não podem ser <code>gs://</code> nem conter <code>..</code>.",
         "<b>Limite de duração:</b> o app compara <code>duration_seconds</code> com <code>MAX_VIDEO_DURATION_SECONDS</code> (3600) <i>depois</i> do transcode e falha o vídeo se excedido.",
         "<b>Persistência no app:</b> grava <code>gcs_high_path</code>, <code>gcs_audio_chunks</code>, <code>duration_seconds</code> e <code>video_resolution{w,h}</code>. Todos os renders posteriores usam o <code>_high.mp4</code>, não o arquivo original.",
+        "<b>Reuso no retry:</b> blocos de áudio gravados como FLAC por versões anteriores não são reaproveitados quando ainda falta transcrever (poderiam exceder o limite de envio inline); o transcode refaz o áudio em MP3. Com legendas já salvas, nada é refeito.",
         "<b>Falha sem áudio:</b> se não há fluxo de áudio extraível, o transcode falha (<code>source contains no extractable audio stream</code>)."
       ],
       "refs": [
         {"label": "app: transcode.submit — cliente HTTP do worker", "path": "app/services/transcode.py", "start": 8, "end": 22, "symbol": "def submit"},
         {"label": "worker: process_transcode — rota HTTP, auth e códigos de erro", "path": "transcode_function/main.py", "start": 54, "end": 102, "symbol": "def process_transcode"},
-        {"label": "worker: TranscodeProcessor.process — baixar, transcodificar, fatiar áudio, subir", "path": "transcode_function/processor.py", "start": 168, "end": 255, "symbol": "def process"},
-        {"label": "build_video_command — comando ffmpeg do vídeo normalizado", "path": "transcode_function/processor.py", "start": 113, "end": 129, "symbol": "def build_video_command"},
-        {"label": "build_audio_command — blocos FLAC mono 16 kHz", "path": "transcode_function/processor.py", "start": 132, "end": 140, "symbol": "def build_audio_command"},
-        {"label": "gpu_available — NVIDIA + h264_nvenc presentes?", "path": "transcode_function/processor.py", "start": 70, "end": 87, "symbol": "def gpu_available"},
-        {"label": "probe_media — duração e dimensões via ffprobe", "path": "transcode_function/processor.py", "start": 90, "end": 110, "symbol": "def probe_media"},
-        {"label": "app: bloco de transcode dentro de process_video", "path": "app/services/processing.py", "start": 121, "end": 174, "symbol": "result = transcode.submit"}
+        {"label": "worker: TranscodeProcessor.process — baixar, transcodificar, fatiar áudio, subir", "path": "transcode_function/processor.py", "start": 205, "end": 297, "symbol": "def process"},
+        {"label": "build_video_command — comando ffmpeg do vídeo normalizado", "path": "transcode_function/processor.py", "start": 116, "end": 132, "symbol": "def build_video_command"},
+        {"label": "build_audio_command — blocos MP3 mono 16 kHz com lista de segmentos", "path": "transcode_function/processor.py", "start": 135, "end": 152, "symbol": "def build_audio_command"},
+        {"label": "read_audio_segments — offsets exatos a partir do CSV do ffmpeg", "path": "transcode_function/processor.py", "start": 158, "end": 177, "symbol": "def read_audio_segments"},
+        {"label": "gpu_available — NVIDIA + h264_nvenc presentes?", "path": "transcode_function/processor.py", "start": 73, "end": 90, "symbol": "def gpu_available"},
+        {"label": "probe_media — duração e dimensões via ffprobe", "path": "transcode_function/processor.py", "start": 93, "end": 113, "symbol": "def probe_media"},
+        {"label": "app: bloco de transcode dentro de process_video (inclui a regra de reuso dos blocos)", "path": "app/services/processing.py", "start": 131, "end": 196, "symbol": "result = transcode.submit"}
       ]
     },
     {
-      "id": "transcribe", "title": "Transcrição PT-BR (Chirp 3)", "status": ["TRANSCRIBING"], "who": ["chirp"],
-      "summary": "Cada bloco FLAC é enviado ao Speech-to-Text v2 (<code>chirp_3</code>, <code>pt-BR</code>) em <code>BatchRecognize</code>; os tempos por palavra viram legendas SRT com o deslocamento absoluto do bloco.",
-      "io": {"in": "<code>gcs_audio_chunks</code> ordenados por <code>offset_seconds</code>.", "out": "SRT canônico em <code>{video_id}/{video_id}.srt</code> e <code>subtitle_text</code>/<code>subtitle_source=chirp_3_pt_br</code> no documento."},
+      "id": "transcribe", "title": "Transcrição PT-BR (Gemini Transcribe)", "status": ["TRANSCRIBING"], "who": ["transcribe"],
+      "summary": "Cada bloco MP3 é enviado <i>inline</i> ao modelo <code>gemini-3.5-transcribe</code> com tempos por palavra; as palavras viram legendas SRT com o deslocamento exato do bloco. Se o Gemini falhar depois das próprias tentativas, todo o vídeo é transcrito de novo com o Chirp 3 (Speech-to-Text v2).",
+      "io": {"in": "<code>gcs_audio_chunks</code> ordenados por <code>offset_seconds</code>.", "out": "SRT canônico em <code>{video_id}/{video_id}.srt</code> e <code>subtitle_text</code> + <code>subtitle_source</code> (<code>gemini_transcribe</code> ou <code>chirp_3_pt_br</code>) no documento."},
       "params": [
-        ["Modelo / idioma", "<code>chirp_3</code>, <code>pt-BR</code>, <code>enable_word_time_offsets=True</code>, decodificação automática"],
-        ["Regiões", "<code>CHIRP_LOCATION</code> (us) e <code>CHIRP_FALLBACK_LOCATION</code> (eu), alternadas a cada tentativa"],
-        ["Tentativas", "até 6 por bloco; só <code>ResourceExhausted</code> (429) é reexecutado"],
-        ["Backoff", "5 s · 2<sup>n</sup>, teto 120 s, jitter ±20 %; respeita <code>RetryInfo</code> do servidor"],
-        ["Polling", "a cada 30 s; operação expira em 50 min; 429 durante o polling reconsulta a mesma operação"],
-        ["Agrupamento", "8 palavras por legenda; fim mínimo = início + 0,4 s"]
+        ["Motor", "<code>SUBTITLE_ENGINE</code> = <code>gemini</code> (padrão) ou <code>chirp</code>; <code>SUBTITLE_FALLBACK_TO_CHIRP</code> (padrão <code>true</code>)"],
+        ["Modelo / idioma", "<code>TRANSCRIBE_MODEL</code> = <code>gemini-3.5-transcribe</code>; <code>TRANSCRIBE_LANGUAGE_CODES</code> = <code>pt-BR</code> (vazio = detecção automática); <code>word_timestamp=True</code>"],
+        ["Envio", "áudio <i>inline</i> (<code>Part.from_bytes</code>, <code>audio/mp3</code>); só os MP3 pequenos são baixados do GCS, nunca o vídeo"],
+        ["Paralelismo", "<code>TRANSCRIBE_CONCURRENCY</code> = 3 blocos ao mesmo tempo"],
+        ["Tentativas", "<code>TRANSCRIBE_MAX_ATTEMPTS</code> = 5 por bloco; reexecuta <code>429/500/502/503/504</code> e erros de rede/timeout; outros erros falham na hora"],
+        ["Backoff", "5 s dobrando até 60 s, mais jitter de até 25 %"],
+        ["Timeout", "<code>TRANSCRIBE_REQUEST_TIMEOUT_SECONDS</code> = 300 s por requisição"],
+        ["Agrupamento", "legendas de até ~80 caracteres / ~5 s; quebra em pausas &gt; 1,5 s e no fim de frases (a partir de 35 caracteres); palavra sem fim válido recebe 0,3 s"]
       ],
       "facts": [
         "<b>Pulada</b> quando o vídeo já tem <code>subtitle_text</code> (SRT enviado pelo usuário ou transcrição anterior).",
-        "<b>Offset:</b> o tempo de cada palavra do bloco <i>n</i> recebe <code>offset_seconds</code> do bloco, logo o SRT final está na linha do tempo do vídeo inteiro.",
-        "Erros que não são 429 interrompem a transcrição imediatamente (<code>chirp_request_failed</code>) e levam o vídeo a <code>ERROR</code>."
+        "<b>Offset:</b> o tempo de cada palavra do bloco <i>n</i> recebe o início exato do bloco (vindo do <code>segment_list</code> do ffmpeg), logo o SRT final está na linha do tempo do vídeo inteiro. Os cues são ordenados e cada fim é cortado para não invadir o próximo.",
+        "<b>Sem buracos:</b> se um bloco falhar após todas as tentativas, a transcrição inteira falha — o SRT nunca sai com trechos faltando. Um bloco sem fala devolve zero cues; se <i>nenhum</i> bloco tiver fala, o erro é <code>nenhuma fala detectada</code>.",
+        "<b>Fallback:</b> o evento <code>engine_fallback</code> é gravado e o Chirp 3 refaz <i>todo</i> o vídeo a partir dos mesmos blocos MP3 (<code>BatchRecognize</code>, <code>chirp_3</code>, alternando <code>CHIRP_LOCATION</code>/<code>CHIRP_FALLBACK_LOCATION</code>, até 6 tentativas por bloco em 429). Se os dois falham, o erro traz as duas causas.",
+        "<b>Histórico:</b> cada passo (<code>gemini_request_started</code>, <code>gemini_request_retry</code>, <code>gemini_chunk_parsed</code>, <code>gemini_request_failed</code>…) vira um evento durável; falhas são <code>ERROR</code> e retentativas/fallback são <code>WARNING</code>."
       ],
       "refs": [
-        {"label": "transcribe_chunks — laço dos blocos e montagem do SRT", "path": "app/services/chirp.py", "start": 264, "end": 298, "symbol": "def transcribe_chunks"},
-        {"label": "_recognize — alternância de regiões, backoff e retentativas", "path": "app/services/chirp.py", "start": 149, "end": 241, "symbol": "def _recognize"},
-        {"label": "_request — configuração de BatchRecognize", "path": "app/services/chirp.py", "start": 94, "end": 108, "symbol": "def _request"},
-        {"label": "_wait_for_operation — polling da operação longa", "path": "app/services/chirp.py", "start": 111, "end": 146, "symbol": "def _wait_for_operation"},
-        {"label": "_result_cues — palavras → legendas", "path": "app/services/chirp.py", "start": 244, "end": 261, "symbol": "def _result_cues"},
+        {"label": "transcribe_chunks — baixa os blocos, transcreve em paralelo e monta o SRT", "path": "app/services/transcribe.py", "start": 266, "end": 340, "symbol": "def transcribe_chunks"},
+        {"label": "_transcribe_chunk — uma requisição por bloco, com retry e backoff", "path": "app/services/transcribe.py", "start": 176, "end": 260, "symbol": "def _transcribe_chunk"},
+        {"label": "extract_words / group_cues / non_overlapping — palavras → legendas", "path": "app/services/transcribe.py", "start": 89, "end": 153, "symbol": "def extract_words"},
+        {"label": "is_retryable — quais erros são reexecutados", "path": "app/services/transcribe.py", "start": 162, "end": 165, "symbol": "def is_retryable"},
+        {"label": "transcribe_audio_chunks — escolha do motor e fallback para o Chirp 3", "path": "app/services/subtitles.py", "start": 38, "end": 68, "symbol": "def transcribe_audio_chunks"},
+        {"label": "Chirp 3 (fallback): transcribe_chunks", "path": "app/services/chirp.py", "start": 264, "end": 298, "symbol": "def transcribe_chunks"},
+        {"label": "Chirp 3 (fallback): _recognize — regiões alternadas e backoff", "path": "app/services/chirp.py", "start": 149, "end": 241, "symbol": "def _recognize"},
         {"label": "SRT: parse_srt / to_srt / slice_srt", "path": "app/services/srt.py", "start": 33, "end": 70, "symbol": "def parse_srt"},
-        {"label": "bloco de transcrição dentro de process_video", "path": "app/services/processing.py", "start": 176, "end": 228, "symbol": "chirp.transcribe_chunks"}
+        {"label": "bloco de transcrição dentro de process_video", "path": "app/services/processing.py", "start": 198, "end": 256, "symbol": "subtitles.transcribe_audio_chunks"}
       ]
     },
     {
@@ -269,7 +278,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"label": "prompt padrão e registro de prompts", "path": "app/services/prompts.py", "start": 16, "end": 36, "symbol": "DEFAULT_CHAPTER_PROMPT"},
         {"label": "get_prompt — override do Firestore ou padrão", "path": "app/services/prompts.py", "start": 43, "end": 52, "symbol": "def get_prompt"},
         {"label": "slice_srt — recorte e deslocamento para tempo relativo", "path": "app/services/srt.py", "start": 62, "end": 70, "symbol": "def slice_srt"},
-        {"label": "criação dos capítulos dentro de process_video", "path": "app/services/processing.py", "start": 230, "end": 281, "symbol": "suggestions = gemini.suggest_chapters"},
+        {"label": "criação dos capítulos dentro de process_video", "path": "app/services/processing.py", "start": 257, "end": 308, "symbol": "suggestions = gemini.suggest_chapters"},
         {"label": "POST /regenerate-chapters — substitui todos os capítulos", "path": "app/routers/api.py", "start": 768, "end": 796, "symbol": "async def regenerate_chapters"}
       ]
     },
@@ -286,13 +295,13 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         "<b>Após o render:</b> o worker sobe o MP4 e responde com o caminho de saída e os artefatos de enquadramento; o app grava <code>renders/{id}</code> como <code>COMPLETED</code> e, se este for o render mais recente, atualiza o capítulo (veja <i>Concorrência</i>)."
       ],
       "refs": [
-        {"label": "render_chapter — registro, payload, chamada ao worker e persistência", "path": "app/services/processing.py", "start": 358, "end": 653, "symbol": "def render_chapter"},
-        {"label": "montagem do payload enviado ao worker", "path": "app/services/processing.py", "start": 451, "end": 484, "symbol": "payload = {"},
+        {"label": "render_chapter — registro, payload, chamada ao worker e persistência", "path": "app/services/processing.py", "start": 385, "end": 680, "symbol": "def render_chapter"},
+        {"label": "montagem do payload enviado ao worker", "path": "app/services/processing.py", "start": 478, "end": 511, "symbol": "payload = {"},
         {"label": "vertical_render.submit — HTTP com retry de rede", "path": "app/services/vertical_render.py", "start": 23, "end": 59, "symbol": "def submit"},
         {"label": "worker: vertical_render — auth, validação, download, motor, upload", "path": "vertical_render_function/main.py", "start": 260, "end": 350, "symbol": "def vertical_render"},
         {"label": "worker: validate_request — contrato do payload", "path": "vertical_render_function/renderer.py", "start": 116, "end": 183, "symbol": "def validate_request"},
         {"label": "worker: seleção do motor e fallback determinístico", "path": "vertical_render_function/main.py", "start": 312, "end": 332, "symbol": "strategy_version = FOCAL_STRATEGY_VERSION"},
-        {"label": "loop de rascunhos dentro de process_video", "path": "app/services/processing.py", "start": 283, "end": 300, "symbol": "_stage(ref, VideoStatus.RENDERING_DRAFTS)"}
+        {"label": "loop de rascunhos dentro de process_video", "path": "app/services/processing.py", "start": 310, "end": 327, "symbol": "_stage(ref, VideoStatus.RENDERING_DRAFTS)"}
       ]
     },
     {
@@ -331,7 +340,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
           {"label": "campos de configuração no fingerprint", "path": "vertical_render_function/autoframe_v10/artifacts.py", "start": 21, "end": 34, "symbol": "_FINGERPRINT_FIELDS"},
           {"label": "dumps/loads do plano (gzip) e caminho do artefato", "path": "vertical_render_function/autoframe_v10/artifacts.py", "start": 74, "end": 88, "symbol": "def dumps_plan"},
           {"label": "worker: reuso ou análise + publicação do plano", "path": "vertical_render_function/main.py", "start": 194, "end": 257, "symbol": "expected_fp = artifacts.plan_fingerprint"},
-          {"label": "app: persistência dos artefatos devolvidos pelo worker", "path": "app/services/processing.py", "start": 513, "end": 545, "symbol": "result = vertical_render.submit"}
+          {"label": "app: persistência dos artefatos devolvidos pelo worker", "path": "app/services/processing.py", "start": 540, "end": 572, "symbol": "result = vertical_render.submit"}
         ]}
       ],
       "io": {"in": "Fonte <code>_high.mp4</code>, <code>trim_start/end</code>, dispositivo e encoder.", "out": "MP4 1080×1920 H.264/AAC + plano gzip no GCS."},
@@ -368,8 +377,8 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"label": "write_ass_captions — SRT absoluto → ASS", "path": "vertical_render_function/renderer.py", "start": 523, "end": 551, "symbol": "def write_ass_captions"},
         {"label": "build_overlay_filters — legendas, logo e títulos", "path": "vertical_render_function/renderer.py", "start": 432, "end": 513, "symbol": "def build_overlay_filters"},
         {"label": "_layout_title_box — quebra e ajuste do título", "path": "vertical_render_function/renderer.py", "start": 331, "end": 368, "symbol": "def _layout_title_box"},
-        {"label": "app: cues absolutos e conversão de % para pixels", "path": "app/services/processing.py", "start": 398, "end": 450, "symbol": "chapter_start = float"},
-        {"label": "app: captions só nos finais", "path": "app/services/processing.py", "start": 471, "end": 473, "symbol": "\"captions\": captions if final else []"},
+        {"label": "app: cues absolutos e conversão de % para pixels", "path": "app/services/processing.py", "start": 425, "end": 477, "symbol": "chapter_start = float"},
+        {"label": "app: captions só nos finais", "path": "app/services/processing.py", "start": 498, "end": 500, "symbol": "\"captions\": captions if final else []"},
         {"label": "UI: simulação de legendas no editor", "path": "app/templates/video_detail.html", "start": 92, "end": 93, "symbol": "function parseCues"}
       ]
     },
@@ -411,7 +420,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"label": "_approval_block_reason — pré-condições", "path": "app/routers/api.py", "start": 65, "end": 75, "symbol": "def _approval_block_reason"},
         {"label": "_template_branding — macros e geometria", "path": "app/routers/api.py", "start": 78, "end": 107, "symbol": "def _template_branding"},
         {"label": "_resolve_template_choice — explícito, none ou padrão", "path": "app/routers/api.py", "start": 366, "end": 375, "symbol": "def _resolve_template_choice"},
-        {"label": "render_final_chapters — lote de finais", "path": "app/services/processing.py", "start": 656, "end": 698, "symbol": "def render_final_chapters"},
+        {"label": "render_final_chapters — lote de finais", "path": "app/services/processing.py", "start": 683, "end": 725, "symbol": "def render_final_chapters"},
         {"label": "POST /retry-finals — refaz só os finais com falha", "path": "app/routers/api.py", "start": 1022, "end": 1052, "symbol": "async def retry_final_renders"}
       ]
     },
@@ -430,8 +439,8 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         "Uma falha aqui <b>não invalida</b> o final vertical: grava <code>horizontal_status=ERROR</code> e <code>horizontal_error</code>."
       ],
       "refs": [
-        {"label": "_render_horizontal_cut — ffmpeg do corte 16:9", "path": "app/services/processing.py", "start": 305, "end": 355, "symbol": "def _render_horizontal_cut"},
-        {"label": "integração após o final vertical (estado + erro isolado)", "path": "app/services/processing.py", "start": 567, "end": 589, "symbol": "_render_horizontal_cut(video, chapter"}
+        {"label": "_render_horizontal_cut — ffmpeg do corte 16:9", "path": "app/services/processing.py", "start": 332, "end": 382, "symbol": "def _render_horizontal_cut"},
+        {"label": "integração após o final vertical (estado + erro isolado)", "path": "app/services/processing.py", "start": 594, "end": 616, "symbol": "_render_horizontal_cut(video, chapter"}
       ]
     },
     {
@@ -446,9 +455,9 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         "<b>Segurança:</b> workers com <code>X-API-Key</code> e comparação em tempo constante, falha fechada sem segredo; caminhos de GCS validados (sem <code>..</code>, <code>gs://</code> ou <code>/</code>); ffmpeg sempre por lista de argumentos, nunca shell."
       ],
       "refs": [
-        {"label": "guarda do render mais recente (sucesso)", "path": "app/services/processing.py", "start": 546, "end": 566, "symbol": "fresh = chapter_ref.get().to_dict()"},
-        {"label": "tratamento de falha e relançamento", "path": "app/services/processing.py", "start": 614, "end": 653, "symbol": "except Exception as exc"},
-        {"label": "fallback NVENC → libx264 no transcode", "path": "transcode_function/processor.py", "start": 203, "end": 216, "symbol": "encoder_used"},
+        {"label": "guarda do render mais recente (sucesso)", "path": "app/services/processing.py", "start": 573, "end": 593, "symbol": "fresh = chapter_ref.get().to_dict()"},
+        {"label": "tratamento de falha e relançamento", "path": "app/services/processing.py", "start": 641, "end": 680, "symbol": "except Exception as exc"},
+        {"label": "fallback NVENC → libx264 no transcode", "path": "transcode_function/processor.py", "start": 240, "end": 253, "symbol": "encoder_used"},
         {"label": "fallback de encoder no v10", "path": "vertical_render_function/autoframe_v10/render.py", "start": 224, "end": 247, "symbol": "attempts = "},
         {"label": "fallback v10 → recorte central determinístico", "path": "vertical_render_function/main.py", "start": 327, "end": 332, "symbol": "recorte central determin"},
         {"label": "autenticação dos workers (falha fechada)", "path": "vertical_render_function/main.py", "start": 103, "end": 106, "symbol": "def _authorized"}
@@ -483,7 +492,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"title": "Cloud Storage", "head": ["Objeto", "Conteúdo"], "rows": [
           ["<code>{id}/{id}_source.ext</code>", "arquivo original enviado/importado"],
           ["<code>{id}/{id}_high.mp4</code>", "H.264/AAC ≤ 1080p normalizado (fonte de todos os renders)"],
-          ["<code>{id}/audio/chunk_NNN.flac</code>", "áudio mono 16 kHz em blocos de 600 s"],
+          ["<code>{id}/audio/chunk_NNN.mp3</code>", "áudio mono 16 kHz (MP3, 64 kb/s) em blocos de ~600 s"],
           ["<code>{id}/{id}.srt</code>", "legenda canônica do vídeo"],
           ["<code>{id}/chapters/{c}/{draft|final}_xxxxxxxxxx.mp4</code>", "renders verticais 1080×1920"],
           ["<code>{id}/chapters/{c}/horizontal_{render_id}.mp4</code>", "corte 16:9"],
@@ -493,7 +502,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         ]}
       ],
       "refs": [
-        {"label": "Settings — coleções, limites e flags", "path": "app/config.py", "start": 9, "end": 64, "symbol": "class Settings"},
+        {"label": "Settings — coleções, limites e flags", "path": "app/config.py", "start": 9, "end": 76, "symbol": "class Settings"},
         {"label": "ChapterInput — contrato de edição de capítulo", "path": "app/models.py", "start": 151, "end": 170, "symbol": "class ChapterInput"}
       ]
     }
@@ -505,7 +514,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
 (function(){
 const DATA=JSON.parse(document.getElementById('doc-data').textContent);
 const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
-const WHO={app:'App (FastAPI)',transcode:'Worker de transcode',chirp:'Speech-to-Text',gemini:'Gemini',render:'Worker vertical',user:'Usuário',pubsub:'Pub/Sub',functions:'Cloud Functions'};
+const WHO={app:'App (FastAPI)',transcode:'Worker de transcode',transcribe:'Gemini Transcribe',chirp:'Speech-to-Text',gemini:'Gemini',render:'Worker vertical',user:'Usuário',pubsub:'Pub/Sub',functions:'Cloud Functions'};
 const store={get:(k,d)=>{try{return localStorage.getItem(k)||d}catch(e){return d}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}};
 let refMode=store.get('docs.ref','commit');
 const ref=()=>refMode==='commit'?DATA.commit:DATA.branch;

@@ -1,12 +1,13 @@
 """Media processing primitives for the Plexus Vertical Cuts transcode worker.
 
 The module deliberately contains no HTTP concerns.  It downloads a GCS object,
-probes it, creates a high-quality H.264/AAC rendition and 16 kHz mono FLAC
-segments, uploads the results, and always removes its temporary workspace.
+probes it, creates a high-quality H.264/AAC rendition and 16 kHz mono MP3
+speech segments, uploads the results, and always removes its temporary workspace.
 """
 
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import os
@@ -37,6 +38,7 @@ class Settings:
     bucket_name: str
     max_height: int = 1080
     audio_chunk_seconds: int = 600
+    audio_bitrate: str = "64k"
     timeout_seconds: int = 10_800
     use_nvenc: bool = True
     temp_root: str = "/tmp"
@@ -50,6 +52,7 @@ class Settings:
             bucket_name=bucket,
             max_height=_positive_int("HIGH_RES_MAX_HEIGHT", 1080),
             audio_chunk_seconds=_positive_int("AUDIO_CHUNK_SECONDS", 600),
+            audio_bitrate=os.getenv("AUDIO_BITRATE", "64k").strip() or "64k",
             timeout_seconds=_positive_int("TRANSCODE_TIMEOUT_SECONDS", 10_800),
             use_nvenc=os.getenv("USE_NVENC", "1").strip().lower() not in _FALSE_VALUES,
             temp_root=os.getenv("TRANSCODE_TEMP_ROOT", "/tmp"),
@@ -129,15 +132,49 @@ def build_video_command(source: str, destination: str, max_height: int, nvenc: b
     ]
 
 
-def build_audio_command(source: str, pattern: str, chunk_seconds: int) -> list[str]:
-    """Build an ffmpeg command producing lossless speech-recognition chunks."""
+def build_audio_command(
+    source: str, pattern: str, chunk_seconds: int, segment_list: str, bitrate: str = "64k"
+) -> list[str]:
+    """Build an ffmpeg command producing small mono 16 kHz MP3 speech chunks.
+
+    MP3 keeps a 10-minute chunk well under the inline request limit of the
+    transcription API. The CSV segment list records each chunk's exact start and
+    end, so offsets never depend on assuming every chunk is exactly N seconds.
+    """
 
     return [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", source,
-        "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "flac",
+        "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000",
+        "-c:a", "libmp3lame", "-b:a", bitrate,
         "-f", "segment", "-segment_time", str(chunk_seconds),
+        "-segment_list", segment_list, "-segment_list_type", "csv",
         "-reset_timestamps", "1", pattern,
     ]
+
+
+MIN_AUDIO_CHUNK_SECONDS = 0.5
+
+
+def read_audio_segments(segment_list: str, directory: Path) -> list[tuple[Path, float, float]]:
+    """Parse ffmpeg's CSV segment list into ``[(path, start, end)]`` sorted by start.
+
+    Chunks shorter than half a second (an encoder tail) are dropped: they carry
+    no usable speech and are rejected by the transcription API.
+    """
+
+    chunks: list[tuple[Path, float, float]] = []
+    try:
+        with open(segment_list, newline="") as handle:
+            for row in csv.reader(handle):
+                if len(row) < 3:
+                    continue
+                path = directory / os.path.basename(row[0])
+                start, end = float(row[1]), float(row[2])
+                if path.exists() and end - start >= MIN_AUDIO_CHUNK_SECONDS:
+                    chunks.append((path, start, end))
+    except (OSError, ValueError) as exc:
+        raise TranscodeError(f"unable to read the audio segment list: {exc}") from exc
+    return sorted(chunks, key=lambda chunk: chunk[1])
 
 
 def _run(command: Sequence[str], timeout: int, label: str) -> None:
@@ -218,19 +255,24 @@ class TranscodeProcessor:
             output_metadata = probe_media(str(high))
             bucket.blob(high_path).upload_from_filename(str(high), content_type="video/mp4")
 
-            pattern = str(audio_dir / "chunk_%03d.flac")
+            pattern = str(audio_dir / "chunk_%03d.mp3")
+            segment_list = str(workdir / "audio_segments.csv")
             _run(
-                build_audio_command(str(source), pattern, self.settings.audio_chunk_seconds),
+                build_audio_command(
+                    str(source), pattern, self.settings.audio_chunk_seconds,
+                    segment_list, self.settings.audio_bitrate,
+                ),
                 self.settings.timeout_seconds,
-                "FLAC audio extraction",
+                "MP3 audio extraction",
             )
             chunks: list[dict[str, Any]] = []
-            for index, chunk in enumerate(sorted(audio_dir.glob("chunk_*.flac"))):
-                object_path = f"{audio_prefix}/chunk_{index:03d}.flac"
-                bucket.blob(object_path).upload_from_filename(str(chunk), content_type="audio/flac")
+            for index, (chunk, start, end) in enumerate(read_audio_segments(segment_list, audio_dir)):
+                object_path = f"{audio_prefix}/chunk_{index:03d}.mp3"
+                bucket.blob(object_path).upload_from_filename(str(chunk), content_type="audio/mpeg")
                 chunks.append({
                     "path": object_path,
-                    "offset_seconds": index * self.settings.audio_chunk_seconds,
+                    "offset_seconds": round(start, 3),
+                    "end_seconds": round(end, 3),
                 })
             if not chunks:
                 raise TranscodeError("source contains no extractable audio stream")

@@ -8,7 +8,7 @@ A interface está em português brasileiro, é responsiva e usa somente a marca 
 
 - Upload direto pelo navegador ou API, inclusive arquivos grandes via upload resumível para GCS.
 - Normalização H.264/AAC em Cloud Run, com NVIDIA L4/NVENC opcional e fallback para CPU.
-- Transcrição `pt-BR` com Speech-to-Text v2 / Chirp 3 ou SRT fornecido pelo usuário.
+- Transcrição `pt-BR` com Gemini Transcribe (Chirp 3 como fallback/alternativa) ou SRT fornecido pelo usuário.
 - Sugestão de capítulos e ganchos com saída estruturada do Gemini.
 - Rascunho vertical automático com pipeline autoframe v10: detecção facial YOLO local, locutor ativo por áudio-vídeo (LR-ASD) e câmera virtual planejada em três passes.
 - Editor de capítulos, limites, legendas estáticas, logo e texto de marca.
@@ -31,8 +31,8 @@ A interface está em português brasileiro, é responsiva e usa somente a marca 
  FastAPI (Cloud Run) ─── Firestore                         │
        │                                                    │
        ├── Transcode worker (Cloud Run CPU/GPU) ◄───────────┤
-       │       └── MP4 H.264 + FLAC 16 kHz                  │
-       ├── Chirp 3 pt-BR                                    │
+       │       └── MP4 H.264 + MP3 16 kHz                   │
+       ├── Gemini Transcribe pt-BR                          │
        ├── Gemini: capítulos                                │
        └── Vertical render worker (Cloud Run CPU) ◄─────────┘
                └── rascunhos e finais 1080 × 1920
@@ -46,7 +46,7 @@ A interface está em português brasileiro, é responsiva e usa somente a marca 
 | Componente | Diretório | Função |
 |---|---|---|
 | Aplicação | raiz + `app/` | UI, API, autenticação e orquestração |
-| Transcodificador | `transcode_function/` | MP4 normalizado e áudio FLAC |
+| Transcodificador | `transcode_function/` | MP4 normalizado e áudio MP3 |
 | Renderizador | `vertical_render_function/` | recorte, legendas e sobreposições |
 | Importador GCS | `watch-folder-functions/process_gcs_bucket/` (guia: [watch-folder-functions/README.md](watch-folder-functions/README.md)) | evento Pub/Sub de `OBJECT_FINALIZE` |
 | Importador S3 | `watch-folder-functions/process_S3_bucket/` | evento S3 encaminhado ao Pub/Sub |
@@ -55,7 +55,7 @@ Não existe servidor de livestream neste projeto.
 
 ## Documentação técnica interativa
 
-[`docs/index.html`](docs/index.html) explica passo a passo como o vídeo é processado (entrada, transcode, Chirp 3, Gemini, rascunhos, autoframe v10, aprovação, corte horizontal) com links para as linhas exatas no GitHub. Abra o arquivo no navegador ou, para ler os trechos de código dentro da própria página, rode `python3 -m http.server` na raiz do repositório e acesse `http://localhost:8000/docs/`. O teste `tests/test_docs_links.py` valida cada link contra o commit fixado na página.
+[`docs/index.html`](docs/index.html) explica passo a passo como o vídeo é processado (entrada, transcode, transcrição com Gemini, sugestão de capítulos, rascunhos, autoframe v10, aprovação, corte horizontal) com links para as linhas exatas no GitHub. Abra o arquivo no navegador ou, para ler os trechos de código dentro da própria página, rode `python3 -m http.server` na raiz do repositório e acesse `http://localhost:8000/docs/`. O teste `tests/test_docs_links.py` valida cada link contra o commit fixado na página.
 
 ## Fluxo e estados
 
@@ -106,7 +106,7 @@ vertical_cuts_allowed_emails/{email_normalizado}
 {video_id}/{video_id}_source.ext
 {video_id}/{video_id}_high.mp4
 {video_id}/{video_id}.srt
-{video_id}/audio/chunk_000.flac
+{video_id}/audio/chunk_000.mp3
 {video_id}/branding/{chapter_id}.png
 {video_id}/chapters/{chapter_id}/{render_id}.mp4
 imports/s3/{bucket}/{hash}/{filename}
@@ -128,7 +128,7 @@ Serviços usados no GCP:
 - Artifact Registry e Cloud Build
 - Cloud Storage
 - Firestore Native
-- Speech-to-Text v2
+- Gemini Transcribe e Speech-to-Text v2 (fallback Chirp 3)
 - Pub/Sub e Eventarc
 - Secret Manager
 

@@ -1,6 +1,6 @@
 """PT-BR transcription with Speech-to-Text v2 Chirp 3.
 
-The transcode worker stores short FLAC chunks in GCS. Processing them one at a
+The transcode worker stores short MP3 chunks in GCS. Processing them one at a
 time keeps requests below service limits and lets this module add each chunk's
 absolute offset when creating the canonical SRT.
 """

@@ -38,6 +38,18 @@ class Settings(BaseSettings):
     CHIRP_LOCATION: str = "us"
     CHIRP_FALLBACK_LOCATION: str = "eu"
 
+    # Speech-to-text engine: "gemini" (Gemini Transcribe, default) or "chirp"
+    # (Speech-to-Text v2 Chirp 3). When Gemini fails after its own retries the
+    # whole video is redone with Chirp 3 unless the fallback is disabled.
+    SUBTITLE_ENGINE: str = "gemini"
+    SUBTITLE_FALLBACK_TO_CHIRP: bool = True
+    TRANSCRIBE_MODEL: str = "gemini-3.5-transcribe"
+    # Comma-separated BCP-47 codes; empty = auto-detect.
+    TRANSCRIBE_LANGUAGE_CODES: str = "pt-BR"
+    TRANSCRIBE_CONCURRENCY: int = 3
+    TRANSCRIBE_MAX_ATTEMPTS: int = 5
+    TRANSCRIBE_REQUEST_TIMEOUT_SECONDS: int = 300
+
     MAX_VIDEO_DURATION_SECONDS: int = 3600
     DAILY_VIDEO_LIMIT: int = 20
     DEFAULT_CHAPTER_MIN_SECONDS: int = 15

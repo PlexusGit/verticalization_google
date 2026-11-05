@@ -15,7 +15,7 @@ from google.cloud import firestore
 from app.config import settings
 from app.db import get_db
 from app.models import RenderRequest, VideoStatus
-from app.services import chirp, events, gemini, srt, storage, transcode, vertical_render
+from app.services import events, gemini, srt, storage, subtitles, transcode, vertical_render
 
 logger = logging.getLogger("plexus.processing")
 
@@ -93,6 +93,16 @@ def store_uploaded_subtitles(video_id: str, subtitle_text: str) -> None:
     )
 
 
+def _transcription_level(action: str) -> str:
+    """Map a transcription progress action to an event severity."""
+
+    if action.endswith("_failed"):
+        return "ERROR"
+    if action.endswith(("_resource_exhausted", "_retry")) or action == "engine_fallback":
+        return "WARNING"
+    return "INFO"
+
+
 def process_video(video_id: str) -> None:
     """Run resumable preprocessing and create automatic vertical drafts.
 
@@ -120,7 +130,18 @@ def process_video(video_id: str) -> None:
 
         high_path = data.get("gcs_high_path")
         audio_chunks = data.get("gcs_audio_chunks") or []
-        if not high_path or not storage.object_exists(high_path) or not audio_chunks:
+        needs_transcription = not (data.get("subtitle_text") or "").strip()
+        # Chunks stored as FLAC by earlier versions can exceed the inline request
+        # size of the transcription API, so they are only reusable as MP3.
+        chunks_usable = bool(audio_chunks) and all(
+            str(chunk.get("path", "")).lower().endswith(".mp3") for chunk in audio_chunks
+        )
+        if (
+            not high_path
+            or not storage.object_exists(high_path)
+            or not audio_chunks
+            or (needs_transcription and not chunks_usable)
+        ):
             _stage(ref, VideoStatus.TRANSCODING)
             stage_started = time.monotonic()
             events.record(
@@ -182,17 +203,22 @@ def process_video(video_id: str) -> None:
                 video_id,
                 "transcription",
                 "transcription_started",
-                "Transcrição PT-BR iniciada",
-                details={"engine": "chirp_3", "audio_chunk_count": len(audio_chunks)},
+                "Transcrição iniciada",
+                details={
+                    "engine": subtitles.configured_engine(),
+                    "model": settings.TRANSCRIBE_MODEL if subtitles.configured_engine() == "gemini" else "chirp_3",
+                    "fallback_to_chirp": settings.SUBTITLE_FALLBACK_TO_CHIRP,
+                    "audio_chunk_count": len(audio_chunks),
+                },
             )
-            subtitle_text = chirp.transcribe_chunks(
+            subtitle_text, subtitle_source = subtitles.transcribe_audio_chunks(
                 audio_chunks,
                 callback=lambda action, message, details: events.record(
                     video_id,
                     "transcription",
                     action,
                     message,
-                    level="ERROR" if action == "chirp_request_failed" else "WARNING" if action in {"chirp_resource_exhausted", "chirp_poll_resource_exhausted"} else "INFO",
+                    level=_transcription_level(action),
                     details=details,
                 ),
             )
@@ -201,7 +227,7 @@ def process_video(video_id: str) -> None:
             ref.update(
                 {
                     "subtitle_text": subtitle_text,
-                    "subtitle_source": "chirp_3_pt_br",
+                    "subtitle_source": subtitle_source,
                     "gcs_srt_path": srt_path,
                     "updated_at": firestore.SERVER_TIMESTAMP,
                 }
@@ -210,11 +236,12 @@ def process_video(video_id: str) -> None:
                 video_id,
                 "transcription",
                 "transcription_completed",
-                "Transcrição PT-BR armazenada",
+                "Transcrição armazenada",
                 details={
                     "elapsed_seconds": round(time.monotonic() - stage_started, 2),
                     "characters": len(subtitle_text),
                     "cue_count": len(srt.parse_srt(subtitle_text)),
+                    "engine": subtitle_source,
                     "srt_path": srt_path,
                 },
             )

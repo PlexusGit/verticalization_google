@@ -101,7 +101,7 @@ gcloud billing projects describe "$GOOGLE_CLOUD_PROJECT"
 ### `LOCATION`
 
 - **Fase:** opcional/avançada.
-- Localização lógica padrão da aplicação; atualmente o fluxo de transcrição usa `CHIRP_LOCATION` de forma explícita.
+- Localização lógica padrão da aplicação; o fallback de transcrição (Chirp 3) usa `CHIRP_LOCATION` de forma explícita.
 - O padrão `us` pode ser mantido.
 
 ### `DEPLOY_REGION`
@@ -338,6 +338,38 @@ INITIAL_ALLOWED_EMAILS=editor1@example.com,editor2@example.com
 - Modelo usado para saída estruturada de capítulos.
 - Padrão recomendado pelo projeto: `gemini-2.5-flash`.
 - Se usar um alias como `gemini-flash-latest`, valide disponibilidade e comportamento antes de produção.
+
+### `SUBTITLE_ENGINE`
+
+- **Fase:** opcional.
+- Motor de transcrição: `gemini` (padrão, Gemini Transcribe) ou `chirp` (Speech-to-Text v2 Chirp 3).
+- Qualquer outro valor usa `gemini`.
+
+### `SUBTITLE_FALLBACK_TO_CHIRP`
+
+- **Fase:** opcional.
+- Padrão `true`: se o Gemini falhar depois das próprias tentativas, todo o vídeo é transcrito de novo com o Chirp 3 (o evento `engine_fallback` fica registrado no histórico). Com `false` a falha do Gemini leva o vídeo a `ERROR`.
+
+### `TRANSCRIBE_MODEL`
+
+- **Fase:** opcional.
+- Modelo de transcrição do Gemini. Padrão: `gemini-3.5-transcribe`.
+- Exige `google-genai` 2.x (`audio_transcription_config`); o `requirements.txt` já fixa a versão.
+
+### `TRANSCRIBE_LANGUAGE_CODES`
+
+- **Fase:** opcional.
+- Códigos BCP-47 separados por vírgula (padrão `pt-BR`). Vazio ativa a detecção automática de idioma.
+
+### `TRANSCRIBE_CONCURRENCY`, `TRANSCRIBE_MAX_ATTEMPTS` e `TRANSCRIBE_REQUEST_TIMEOUT_SECONDS`
+
+- **Fase:** opcionais.
+- Blocos de áudio transcritos em paralelo (padrão 3), tentativas por bloco em erros transitórios `429/5xx` e de rede (padrão 5, espera exponencial de 5 s a 60 s) e timeout de cada requisição (padrão 300 s).
+
+### `AUDIO_CHUNK_SECONDS` e `AUDIO_BITRATE`
+
+- **Fase:** opcionais; lidas pelo **worker de transcode**.
+- Duração de cada bloco de áudio MP3 mono 16 kHz (padrão 600 s; os tempos por palavra do Gemini têm limite de 15–30 min por requisição) e bitrate (padrão `64k`, mantém cada bloco pequeno o bastante para envio inline).
 
 ### `CHIRP_LOCATION`
 
