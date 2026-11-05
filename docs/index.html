@@ -169,9 +169,9 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
       ],
       "refs": [
         {"label": "process_gcs_bucket — handler do gatilho GCS", "path": "watch-folder-functions/process_gcs_bucket/main.py", "start": 136, "end": 171, "symbol": "def process_gcs_bucket"},
-        {"label": "GCS: _post_import — classificação das respostas da API", "path": "watch-folder-functions/process_gcs_bucket/main.py", "start": 105, "end": 134, "symbol": "def _post_import"},
-        {"label": "process_s3_bucket — handler do gatilho S3", "path": "watch-folder-functions/process_S3_bucket/main.py", "start": 259, "end": 292, "symbol": "def process_s3_bucket"},
-        {"label": "S3: _download_and_upload — streaming S3 → GCS", "path": "watch-folder-functions/process_S3_bucket/main.py", "start": 152, "end": 194, "symbol": "def _download_and_upload"},
+        {"label": "GCS: _post_import — classificação das respostas da API", "path": "watch-folder-functions/process_gcs_bucket/main.py", "start": 105, "end": 133, "symbol": "def _post_import"},
+        {"label": "process_s3_bucket — handler do gatilho S3", "path": "watch-folder-functions/process_S3_bucket/main.py", "start": 259, "end": 291, "symbol": "def process_s3_bucket"},
+        {"label": "S3: _download_and_upload — streaming S3 → GCS", "path": "watch-folder-functions/process_S3_bucket/main.py", "start": 152, "end": 193, "symbol": "def _download_and_upload"},
         {"label": "S3: _idempotency_key / _destination_path", "path": "watch-folder-functions/process_S3_bucket/main.py", "start": 128, "end": 142, "symbol": "def _idempotency_key"},
         {"label": "deploy da função GCS (gatilho Pub/Sub, segredo da API)", "path": "watch-folder-functions/process_gcs_bucket/deploy.sh", "start": 36, "end": 49, "symbol": "gcloud functions deploy"}
       ]
@@ -196,36 +196,42 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
     },
     {
       "id": "transcode", "title": "Transcode e extração de áudio", "status": ["TRANSCODING"], "who": ["transcode"],
-      "summary": "Um worker Cloud Run (Functions Framework + ffmpeg) baixa a origem, normaliza o vídeo para H.264/AAC de até 1080p e fatia o áudio em MP3 mono 16 kHz para o reconhecimento de fala.",
+      "summary": "Um worker Cloud Run (Functions Framework + ffmpeg) baixa a origem e produz a versão de trabalho em MP4 H.264/AAC de até 1080p — <b>copiando o stream sem re-encode</b> quando a fonte já é compatível — e fatia o áudio em MP3 mono 16 kHz para o reconhecimento de fala.",
       "io": {"in": "<code>{video_id, gcs_source_path, high_gcs_path}</code> via <code>POST /</code> com <code>X-API-Key</code> (timeout do cliente: 3600 s).", "out": "<code>high_gcs_path</code>, <code>gcs_audio_chunks[{path, offset_seconds, end_seconds}]</code>, <code>duration_seconds</code>, <code>resolution</code>, <code>video_encoder</code>."},
       "params": [
         ["Escala", "<code>scale=-2:min(1080\\,ih)</code> — nunca amplia; largura par"],
-        ["Codec (CPU)", "<code>libx264 -preset medium -crf 18</code>"],
+        ["Remux", "<code>TRANSCODE_REMUX=1</code>: se a fonte já é H.264/yuv420p até a altura máxima, sem rotação e com keyframes a cada ≤<code>TRANSCODE_MAX_REMUX_KEYFRAME_GAP_SECONDS=15</code> s, o vídeo é copiado sem re-encode (o áudio ainda vira AAC)"],
+        ["Codec (CPU)", "<code>libx264 -preset TRANSCODE_PRESET -crf TRANSCODE_CRF</code> (padrão <code>medium</code>/<code>18</code>; <code>veryfast</code>/<code>20</code> é ~3–4× mais rápido)"],
         ["Codec (GPU)", "<code>h264_nvenc -preset p5 -tune hq -rc vbr -cq 19 -b:v 0</code>; se falhar, refaz com libx264"],
         ["Compatibilidade", "<code>-pix_fmt yuv420p -profile:v high -movflags +faststart</code>"],
         ["Áudio do vídeo", "AAC 192 kb/s, 48 kHz"],
         ["Áudio p/ STT", "<code>-ac 1 -ar 16000 -c:a libmp3lame -b:a 64k -f segment -segment_time 600</code> (blocos de 600 s; <code>AUDIO_CHUNK_SECONDS</code> / <code>AUDIO_BITRATE</code>)"],
         ["Offsets dos blocos", "lidos do <code>-segment_list</code> (CSV) do ffmpeg — início exato de cada bloco; sobras &lt; 0,5 s são descartadas"],
-        ["Timeout", "<code>TRANSCODE_TIMEOUT_SECONDS</code> = 10 800 s por comando"]
+        ["Timeout", "<code>TRANSCODE_TIMEOUT_SECONDS</code> = 10 800 s por comando"],
+        ["Progresso", "cada passo ffmpeg grava <code>iniciou/…%/concluído</code> no log (<code>-progress pipe:1</code>, a cada 15 s) — um encode longo não parece mais travado"]
       ],
       "facts": [
         "<b>Autenticação:</b> comparação em tempo constante (<code>hmac.compare_digest</code>); sem <code>SECURITY_TOKEN</code> configurado o worker recusa tudo (falha fechada).",
         "<b>Segurança de caminhos:</b> <code>video_id</code> só aceita <code>[A-Za-z0-9._-]</code>; caminhos de objeto não podem ser <code>gs://</code> nem conter <code>..</code>.",
         "<b>Limite de duração:</b> o app compara <code>duration_seconds</code> com <code>MAX_VIDEO_DURATION_SECONDS</code> (3600) <i>depois</i> do transcode e falha o vídeo se excedido.",
         "<b>Persistência no app:</b> grava <code>gcs_high_path</code>, <code>gcs_audio_chunks</code>, <code>duration_seconds</code> e <code>video_resolution{w,h}</code>. Todos os renders posteriores usam o <code>_high.mp4</code>, não o arquivo original.",
+        "<b>Por que o limite de keyframes:</b> o corte dos capítulos e a análise de frames buscam a partir do keyframe anterior; um arquivo remuxado mantém o layout original de keyframes, então só vídeos com keyframes razoavelmente próximos (≤15 s) podem pular o re-encode.",
+        "<b>Rotação é excluída do remux:</b> o re-encode aplica a rotação nos pixels; copiar o stream manteria a tag e confundiria a análise de frames.",
         "<b>Reuso no retry:</b> blocos de áudio gravados como FLAC por versões anteriores não são reaproveitados quando ainda falta transcrever (poderiam exceder o limite de envio inline); o transcode refaz o áudio em MP3. Com legendas já salvas, nada é refeito.",
         "<b>Falha sem áudio:</b> se não há fluxo de áudio extraível, o transcode falha (<code>source contains no extractable audio stream</code>)."
       ],
       "refs": [
         {"label": "app: transcode.submit — cliente HTTP do worker", "path": "app/services/transcode.py", "start": 8, "end": 22, "symbol": "def submit"},
         {"label": "worker: process_transcode — rota HTTP, auth e códigos de erro", "path": "transcode_function/main.py", "start": 54, "end": 102, "symbol": "def process_transcode"},
-        {"label": "worker: TranscodeProcessor.process — baixar, transcodificar, fatiar áudio, subir", "path": "transcode_function/processor.py", "start": 205, "end": 297, "symbol": "def process"},
-        {"label": "build_video_command — comando ffmpeg do vídeo normalizado", "path": "transcode_function/processor.py", "start": 116, "end": 132, "symbol": "def build_video_command"},
-        {"label": "build_audio_command — blocos MP3 mono 16 kHz com lista de segmentos", "path": "transcode_function/processor.py", "start": 135, "end": 152, "symbol": "def build_audio_command"},
-        {"label": "read_audio_segments — offsets exatos a partir do CSV do ffmpeg", "path": "transcode_function/processor.py", "start": 158, "end": 177, "symbol": "def read_audio_segments"},
-        {"label": "gpu_available — NVIDIA + h264_nvenc presentes?", "path": "transcode_function/processor.py", "start": 73, "end": 90, "symbol": "def gpu_available"},
-        {"label": "probe_media — duração e dimensões via ffprobe", "path": "transcode_function/processor.py", "start": 93, "end": 113, "symbol": "def probe_media"},
-        {"label": "app: bloco de transcode dentro de process_video (inclui a regra de reuso dos blocos)", "path": "app/services/processing.py", "start": 131, "end": 196, "symbol": "result = transcode.submit"}
+        {"label": "worker: TranscodeProcessor.process — baixar, transcodificar, fatiar áudio, subir", "path": "transcode_function/processor.py", "start": 449, "end": 577, "symbol": "def process"},
+        {"label": "probe_media — duração, dimensões e codec via ffprobe", "path": "transcode_function/processor.py", "start": 146, "end": 177, "symbol": "def probe_media"},
+        {"label": "measure_max_keyframe_gap — maior lacuna entre keyframes", "path": "transcode_function/processor.py", "start": 198, "end": 225, "symbol": "def measure_max_keyframe_gap"},
+        {"label": "remux_blocker — motivo que impede a cópia do stream", "path": "transcode_function/processor.py", "start": 228, "end": 246, "symbol": "def remux_blocker"},
+                {"label": "_run / _run_with_progress — logs de início, progresso % e fim", "path": "transcode_function/processor.py", "start": 342, "end": 369, "symbol": "def _run"},
+        {"label": "build_video_command — comando ffmpeg do vídeo normalizado", "path": "transcode_function/processor.py", "start": 249, "end": 268, "symbol": "def build_video_command"},
+        {"label": "build_audio_command — blocos MP3 mono 16 kHz com lista de segmentos", "path": "transcode_function/processor.py", "start": 286, "end": 303, "symbol": "def build_audio_command"},
+        {"label": "read_audio_segments — offsets exatos a partir do CSV do ffmpeg", "path": "transcode_function/processor.py", "start": 309, "end": 328, "symbol": "def read_audio_segments"},
+                {"label": "app: bloco de transcode dentro de process_video (inclui a regra de reuso dos blocos)", "path": "app/services/processing.py", "start": 131, "end": 196, "symbol": "result = transcode.submit"}
       ]
     },
     {
@@ -251,7 +257,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
       ],
       "refs": [
         {"label": "transcribe_chunks — baixa os blocos, transcreve em paralelo e monta o SRT", "path": "app/services/transcribe.py", "start": 266, "end": 340, "symbol": "def transcribe_chunks"},
-        {"label": "_transcribe_chunk — uma requisição por bloco, com retry e backoff", "path": "app/services/transcribe.py", "start": 176, "end": 260, "symbol": "def _transcribe_chunk"},
+        {"label": "_transcribe_chunk — uma requisição por bloco, com retry e backoff", "path": "app/services/transcribe.py", "start": 176, "end": 259, "symbol": "def _transcribe_chunk"},
         {"label": "extract_words / group_cues / non_overlapping — palavras → legendas", "path": "app/services/transcribe.py", "start": 89, "end": 153, "symbol": "def extract_words"},
         {"label": "is_retryable — quais erros são reexecutados", "path": "app/services/transcribe.py", "start": 162, "end": 165, "symbol": "def is_retryable"},
         {"label": "transcribe_audio_chunks — escolha do motor e fallback para o Chirp 3", "path": "app/services/subtitles.py", "start": 38, "end": 68, "symbol": "def transcribe_audio_chunks"},
@@ -276,7 +282,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"label": "suggest_chapters — chamada ao Gemini", "path": "app/services/gemini.py", "start": 38, "end": 68, "symbol": "def suggest_chapters"},
         {"label": "SuggestedChapter — validação de cada capítulo", "path": "app/services/gemini.py", "start": 12, "end": 31, "symbol": "class SuggestedChapter"},
         {"label": "prompt padrão e registro de prompts", "path": "app/services/prompts.py", "start": 16, "end": 36, "symbol": "DEFAULT_CHAPTER_PROMPT"},
-        {"label": "get_prompt — override do Firestore ou padrão", "path": "app/services/prompts.py", "start": 43, "end": 52, "symbol": "def get_prompt"},
+        {"label": "get_prompt — override do Firestore ou padrão", "path": "app/services/prompts.py", "start": 43, "end": 51, "symbol": "def get_prompt"},
         {"label": "slice_srt — recorte e deslocamento para tempo relativo", "path": "app/services/srt.py", "start": 62, "end": 70, "symbol": "def slice_srt"},
         {"label": "criação dos capítulos dentro de process_video", "path": "app/services/processing.py", "start": 257, "end": 308, "symbol": "suggestions = gemini.suggest_chapters"},
         {"label": "POST /regenerate-chapters — substitui todos os capítulos", "path": "app/routers/api.py", "start": 768, "end": 796, "symbol": "async def regenerate_chapters"}
@@ -376,7 +382,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
       "refs": [
         {"label": "write_ass_captions — SRT absoluto → ASS", "path": "vertical_render_function/renderer.py", "start": 523, "end": 551, "symbol": "def write_ass_captions"},
         {"label": "build_overlay_filters — legendas, logo e títulos", "path": "vertical_render_function/renderer.py", "start": 432, "end": 513, "symbol": "def build_overlay_filters"},
-        {"label": "_layout_title_box — quebra e ajuste do título", "path": "vertical_render_function/renderer.py", "start": 331, "end": 368, "symbol": "def _layout_title_box"},
+        {"label": "_layout_title_box — quebra e ajuste do título", "path": "vertical_render_function/renderer.py", "start": 331, "end": 367, "symbol": "def _layout_title_box"},
         {"label": "app: cues absolutos e conversão de % para pixels", "path": "app/services/processing.py", "start": 425, "end": 477, "symbol": "chapter_start = float"},
         {"label": "app: captions só nos finais", "path": "app/services/processing.py", "start": 498, "end": 500, "symbol": "\"captions\": captions if final else []"},
         {"label": "UI: simulação de legendas no editor", "path": "app/templates/video_detail.html", "start": 92, "end": 93, "symbol": "function parseCues"}
@@ -457,7 +463,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
       "refs": [
         {"label": "guarda do render mais recente (sucesso)", "path": "app/services/processing.py", "start": 573, "end": 593, "symbol": "fresh = chapter_ref.get().to_dict()"},
         {"label": "tratamento de falha e relançamento", "path": "app/services/processing.py", "start": 641, "end": 680, "symbol": "except Exception as exc"},
-        {"label": "fallback NVENC → libx264 no transcode", "path": "transcode_function/processor.py", "start": 240, "end": 253, "symbol": "encoder_used"},
+        {"label": "fallback NVENC → libx264 no transcode", "path": "transcode_function/processor.py", "start": 519, "end": 532, "symbol": "encoder_used"},
         {"label": "fallback de encoder no v10", "path": "vertical_render_function/autoframe_v10/render.py", "start": 224, "end": 247, "symbol": "attempts = "},
         {"label": "fallback v10 → recorte central determinístico", "path": "vertical_render_function/main.py", "start": 327, "end": 332, "symbol": "recorte central determin"},
         {"label": "autenticação dos workers (falha fechada)", "path": "vertical_render_function/main.py", "start": 103, "end": 106, "symbol": "def _authorized"}

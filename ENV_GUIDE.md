@@ -371,6 +371,16 @@ INITIAL_ALLOWED_EMAILS=editor1@example.com,editor2@example.com
 - **Fase:** opcionais; lidas pelo **worker de transcode**.
 - Duração de cada bloco de áudio MP3 mono 16 kHz (padrão 600 s; os tempos por palavra do Gemini têm limite de 15–30 min por requisição) e bitrate (padrão `64k`, mantém cada bloco pequeno o bastante para envio inline).
 
+### `TRANSCODE_PRESET` e `TRANSCODE_CRF`
+
+- **Fase:** opcionais; lidas pelo **worker de transcode** (só o caminho CPU/x264; o NVENC mantém o próprio ajuste).
+- Velocidade/qualidade do re-encode do vídeo de trabalho. Padrão `medium` / `18` (o comportamento de sempre). `veryfast` / `20` costuma cortar o tempo de encode em ~3–4× com custo pequeno de qualidade — os mesmos valores que o corte horizontal 16:9 já usa.
+
+### `TRANSCODE_REMUX` e `TRANSCODE_MAX_REMUX_KEYFRAME_GAP_SECONDS`
+
+- **Fase:** opcionais; lidas pelo **worker de transcode**.
+- `TRANSCODE_REMUX=1` (padrão): quando a fonte já é H.264/yuv420p até a altura máxima, sem rotação e com keyframes espaçados por no máximo `TRANSCODE_MAX_REMUX_KEYFRAME_GAP_SECONDS` (padrão 15 s), o vídeo é **copiado** para o MP4 normalizado sem re-encode — o transcode fica quase instantâneo (o áudio continua sendo convertido para AAC). O limite de keyframes existe porque o corte de capítulos e a análise de frames buscam a partir do keyframe anterior; keyframes esparsos deixariam cada busca lenta. Fontes que não se enquadram seguem o re-encode normal.
+
 ### `CHIRP_LOCATION`
 
 - **Fase:** opcional.

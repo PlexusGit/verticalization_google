@@ -46,7 +46,7 @@ A interface está em português brasileiro, é responsiva e usa somente a marca 
 | Componente | Diretório | Função |
 |---|---|---|
 | Aplicação | raiz + `app/` | UI, API, autenticação e orquestração |
-| Transcodificador | `transcode_function/` | MP4 normalizado e áudio MP3 |
+| Transcodificador | `transcode_function/` | MP4 normalizado (ou remux sem re-encode quando a fonte já é compatível) e áudio MP3 |
 | Renderizador | `vertical_render_function/` | recorte, legendas e sobreposições |
 | Importador GCS | `watch-folder-functions/process_gcs_bucket/` (guia: [watch-folder-functions/README.md](watch-folder-functions/README.md)) | evento Pub/Sub de `OBJECT_FINALIZE` |
 | Importador S3 | `watch-folder-functions/process_S3_bucket/` | evento S3 encaminhado ao Pub/Sub |
