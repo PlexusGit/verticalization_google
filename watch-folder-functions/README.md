@@ -110,6 +110,17 @@ gcloud services enable pubsub.googleapis.com cloudfunctions.googleapis.com event
   secretmanager.googleapis.com storage.googleapis.com
 ```
 
+### 4.1b Permissão de build das funções Gen2
+
+O build de uma função Gen2 roda como a conta de serviço padrão do Compute Engine, que precisa do papel `cloudbuild.builds.builder`. Sem ele o deploy falha com *missing permission on the build service account* (o `setup_gcp.sh` já concede):
+
+```bash
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')
+gcloud projects add-iam-policy-binding "$PROJECT" \
+  --member "serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+  --role roles/cloudbuild.builds.builder
+```
+
 ### 4.2 Criar o bucket monitorado
 
 ```bash
@@ -364,6 +375,7 @@ Para a S3 use a porta 8084 e um corpo como `{"bucket":"...","key":"..."}`. Local
 
 | Sintoma | Causa provável e ação |
 |---|---|
+| Deploy falha: `missing permission on the build service account` | Conceda `roles/cloudbuild.builds.builder` à conta `<nº do projeto>-compute@developer.gserviceaccount.com` (seção 4.1b) e repita; pode levar ~1 min para propagar. |
 | Nada acontece ao enviar um arquivo ao GCS | Verifique `gcloud storage buckets notifications list gs://WATCH`; o agente `service-<nº>@gs-project-accounts...` precisa de `pubsub.publisher`; confirme `gcloud pubsub subscriptions list --filter="topic:TOPIC"` (o deploy cria a assinatura do gatilho). |
 | Log: `Ignoring object from an unwatched bucket` | `GCS_WATCH_BUCKET`/`S3_WATCH_BUCKET` da função difere do bucket do evento. Redeploy com o valor correto. |
 | Log: `Ignoring object with an unsupported extension` | Extensão fora de `*_ALLOWED_EXTENSIONS`. |

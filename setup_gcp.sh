@@ -61,6 +61,11 @@ for topic in "${GCS_TOPIC}" "${S3_TOPIC}"; do
   gcloud pubsub topics describe "${topic}" --project "${PROJECT}" >/dev/null 2>&1 || gcloud pubsub topics create "${topic}" --project "${PROJECT}"
 done
 PROJECT_NUMBER="$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')"
+# Gen2 Cloud Functions build as the default compute service account, which needs
+# this role or the build fails with "missing permission on the build service account".
+gcloud projects add-iam-policy-binding "${PROJECT}" \
+  --member "serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+  --role roles/cloudbuild.builds.builder --quiet >/dev/null
 gcloud projects add-iam-policy-binding "${PROJECT}" \
   --member "serviceAccount:service-${PROJECT_NUMBER}@gs-project-accounts.iam.gserviceaccount.com" \
   --role roles/pubsub.publisher --quiet >/dev/null
