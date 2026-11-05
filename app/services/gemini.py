@@ -52,7 +52,11 @@ def suggest_chapters(subtitle_text: str) -> list[SuggestedChapter]:
             minimum=settings.DEFAULT_CHAPTER_MIN_SECONDS,
             maximum=settings.DEFAULT_CHAPTER_MAX_SECONDS,
         )
-    response = genai.Client(api_key=settings.GEMINI_API_KEY).models.generate_content(
+    # The client must outlive the request: google-genai 2.x closes the underlying
+    # HTTP client in Client.__del__, so an inline temporary is destroyed
+    # mid-call ("Cannot send a request, as the client has been closed").
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    response = client.models.generate_content(
         model=settings.GEMINI_MODEL,
         contents=f"{prompt}\n\n--- LEGENDAS SRT ---\n{subtitle_text}",
         config=types.GenerateContentConfig(
