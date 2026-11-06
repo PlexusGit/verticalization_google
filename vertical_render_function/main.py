@@ -79,12 +79,16 @@ def _safe_id(payload: dict[str, Any], field: str, required: bool = True) -> str 
     return value
 
 
-def update_status(video_id: str, render_id: str, chapter_id: str | None, status: str, **fields: Any) -> None:
+def update_status(
+    video_id: str, render_id: str, chapter_id: str | None, status: str,
+    render_only: dict[str, Any] | None = None, **fields: Any,
+) -> None:
     """Best-effort status writes; a status outage must not hide the render result.
 
     Render state lives at videos/{video}/renders/{render}.  When chapter_id is
     provided, the corresponding chapter receives the same lifecycle status and
     output/error fields so both list and detail views remain consistent.
+    ``render_only`` fields (e.g. the full result) go to the render document only.
     """
     payload = {"status": status, "updated_at": firestore.SERVER_TIMESTAMP, **fields}
     try:
@@ -93,8 +97,8 @@ def update_status(video_id: str, render_id: str, chapter_id: str | None, status:
         if chapter_id:
             refs.append(db.collection(VIDEOS_COLLECTION).document(video_id).collection("chapters").document(chapter_id))
         batch = db.batch()
-        for ref in refs:
-            batch.set(ref, payload, merge=True)
+        for index, ref in enumerate(refs):
+            batch.set(ref, {**payload, **(render_only or {})} if index == 0 else payload, merge=True)
         batch.commit()
     except Exception:
         logger.exception("Unable to update Firestore status for render %s", render_id)
@@ -335,10 +339,14 @@ def vertical_render(request: Any):
                 render(spec, source_path, output_path, ass_path=ass_path, logo_path=logo_path)
             output_uri = _upload(spec.output_gcs_path, output_path)
 
-        update_status(video_id, render_id, chapter_id, "COMPLETED", output_gcs_path=output_uri, completed_at=firestore.SERVER_TIMESTAMP, error=firestore.DELETE_FIELD)
         # v10 returns no focal keyframes — the reusable artifact is the plan.
         points = [] if used_v10 else list(spec.automatic_focal_points)
-        return ({"status": "COMPLETED", "video_id": video_id, "render_id": render_id, "chapter_id": chapter_id, "output_gcs_path": output_uri, "width": 1080, "height": 1920, "automatic_focal_points": points, "focal_strategy_version": strategy_version, **extras}, 200, _cors_headers())
+        body = {"status": "COMPLETED", "video_id": video_id, "render_id": render_id, "chapter_id": chapter_id, "output_gcs_path": output_uri, "width": 1080, "height": 1920, "automatic_focal_points": points, "focal_strategy_version": strategy_version, **extras}
+        # The full response is stored with the status so a caller that lost the
+        # HTTP response (gateway error, restarted app) can still adopt this
+        # render instead of repeating a multi-minute job.
+        update_status(video_id, render_id, chapter_id, "COMPLETED", output_gcs_path=output_uri, render_only={"result": body}, completed_at=firestore.SERVER_TIMESTAMP, error=firestore.DELETE_FIELD)
+        return (body, 200, _cors_headers())
     except ValidationError as exc:
         # Some style values are validated while assembling the filter graph.
         update_status(video_id, render_id, chapter_id, "ERROR", error=str(exc))

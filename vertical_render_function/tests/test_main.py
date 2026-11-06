@@ -75,6 +75,37 @@ def test_component_success_downloads_renders_uploads_and_updates_both_statuses(a
     assert body["automatic_focal_points"] == [{"time": 0.0, "x": 800.0, "y": 500.0}]
     assert [entry[0][3] for entry in updates] == ["PROCESSING", "COMPLETED"]
     assert all(entry[0][2] == "chapter_1" for entry in updates)
+    # The full response is stored with the status so a caller that lost the
+    # HTTP response can still adopt the render.
+    assert updates[-1][1]["render_only"] == {"result": body}
+
+
+def test_update_status_stores_the_result_on_the_render_document_only(monkeypatch):
+    batch = Mock()
+    docs = {}
+
+    class Doc:
+        def __init__(self, path):
+            self.path = path
+
+        def collection(self, name):
+            return Doc(self.path + "/" + name)
+
+        def document(self, name):
+            return Doc(self.path + "/" + name)
+
+    db = Mock()
+    db.collection.side_effect = lambda name: Doc(name)
+    db.batch.return_value = batch
+    monkeypatch.setattr(main, "firestore_client", lambda: db)
+
+    main.update_status("v1", "r1", "c1", "COMPLETED", render_only={"result": {"x": 1}}, output_gcs_path="o")
+
+    (render_call, chapter_call) = batch.set.call_args_list
+    assert render_call.args[0].path.endswith("/renders/r1")
+    assert render_call.args[1]["result"] == {"x": 1} and render_call.args[1]["output_gcs_path"] == "o"
+    assert chapter_call.args[0].path.endswith("/chapters/c1")
+    assert "result" not in chapter_call.args[1] and chapter_call.args[1]["output_gcs_path"] == "o"
 
 
 def test_automatic_focus_falls_back_to_center_on_detection_error(monkeypatch):

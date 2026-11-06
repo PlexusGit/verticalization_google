@@ -15,7 +15,7 @@ from google.cloud import firestore
 from app.config import settings
 from app.db import get_db
 from app.models import RenderRequest, VideoStatus
-from app.services import events, gemini, srt, storage, subtitles, transcode, vertical_render
+from app.services import events, gemini, lease, srt, storage, subtitles, transcode, vertical_render
 
 logger = logging.getLogger("plexus.processing")
 
@@ -103,11 +103,21 @@ def _transcription_level(action: str) -> str:
     return "INFO"
 
 
-def process_video(video_id: str) -> None:
+def process_video(video_id: str, resume: bool = False) -> None:
+    """Run the pipeline while holding the heartbeat lease (see ``app.services.lease``)."""
+
+    with lease.pipeline_lease(video_id):
+        _process_video(video_id, resume)
+
+
+def _process_video(video_id: str, resume: bool) -> None:
     """Run resumable preprocessing and create automatic vertical drafts.
 
     Each expensive stage persists its output first. A retry can therefore reuse
-    valid transcode or transcription artifacts instead of starting over.
+    valid transcode or transcription artifacts instead of starting over. With
+    ``resume`` the chapters already stored are kept (no new Gemini suggestion),
+    drafts that already completed are skipped, and renders the worker finished
+    or is still running are adopted instead of being repeated.
     """
 
     ref = _video_ref(video_id)
@@ -254,58 +264,69 @@ def process_video(video_id: str) -> None:
                 details={"source": data.get("subtitle_source"), "characters": len(subtitle_text)},
             )
 
-        _stage(ref, VideoStatus.SUGGESTING)
-        stage_started = time.monotonic()
-        events.record(
-            video_id,
-            "suggestion",
-            "suggestion_started",
-            "Geração de capítulos com Gemini iniciada",
-            details={"subtitle_characters": len(subtitle_text), "model": settings.GEMINI_MODEL},
-        )
-        suggestions = gemini.suggest_chapters(subtitle_text)
-        if not suggestions:
-            raise RuntimeError("nenhum capítulo foi sugerido")
-        events.record(
-            video_id,
-            "suggestion",
-            "suggestion_completed",
-            "Gemini retornou capítulos válidos",
-            details={"elapsed_seconds": round(time.monotonic() - stage_started, 2), "chapter_count": len(suggestions)},
-        )
+        existing = _stored_chapters(ref) if resume else []
+        if existing:
+            chapter_refs = existing
+            events.record(
+                video_id,
+                "chapters",
+                "chapters_reused",
+                "Capítulos já existentes foram reutilizados",
+                details={"chapter_count": len(chapter_refs)},
+            )
+        else:
+            _stage(ref, VideoStatus.SUGGESTING)
+            stage_started = time.monotonic()
+            events.record(
+                video_id,
+                "suggestion",
+                "suggestion_started",
+                "Geração de capítulos com Gemini iniciada",
+                details={"subtitle_characters": len(subtitle_text), "model": settings.GEMINI_MODEL},
+            )
+            suggestions = gemini.suggest_chapters(subtitle_text)
+            if not suggestions:
+                raise RuntimeError("nenhum capítulo foi sugerido")
+            events.record(
+                video_id,
+                "suggestion",
+                "suggestion_completed",
+                "Gemini retornou capítulos válidos",
+                details={"elapsed_seconds": round(time.monotonic() - stage_started, 2), "chapter_count": len(suggestions)},
+            )
 
-        chapter_refs = []
-        for index, suggestion in enumerate(suggestions, start=1):
-            chapter_id = f"chapter_{index:03d}"
-            chapter_ref = ref.collection("chapters").document(chapter_id)
-            chapter_subtitles = srt.slice_srt(
-                subtitle_text,
-                suggestion.start_seconds,
-                suggestion.end_seconds,
+            chapter_refs = []
+            for index, suggestion in enumerate(suggestions, start=1):
+                chapter_id = f"chapter_{index:03d}"
+                chapter_ref = ref.collection("chapters").document(chapter_id)
+                chapter_subtitles = srt.slice_srt(
+                    subtitle_text,
+                    suggestion.start_seconds,
+                    suggestion.end_seconds,
+                )
+                chapter_ref.set(
+                    {
+                        "id": chapter_id,
+                        "title": suggestion.title,
+                        "reason": suggestion.reason,
+                        "start_seconds": suggestion.start_seconds,
+                        "end_seconds": suggestion.end_seconds,
+                        "subtitle_text": chapter_subtitles,
+                        "selected": True,
+                        "draft_status": "QUEUED",
+                        "created_at": firestore.SERVER_TIMESTAMP,
+                        "updated_at": firestore.SERVER_TIMESTAMP,
+                    },
+                    merge=True,
+                )
+                chapter_refs.append((chapter_id, chapter_ref))
+            events.record(
+                video_id,
+                "chapters",
+                "chapters_persisted",
+                "Capítulos sugeridos foram armazenados",
+                details={"chapter_count": len(chapter_refs)},
             )
-            chapter_ref.set(
-                {
-                    "id": chapter_id,
-                    "title": suggestion.title,
-                    "reason": suggestion.reason,
-                    "start_seconds": suggestion.start_seconds,
-                    "end_seconds": suggestion.end_seconds,
-                    "subtitle_text": chapter_subtitles,
-                    "selected": True,
-                    "draft_status": "QUEUED",
-                    "created_at": firestore.SERVER_TIMESTAMP,
-                    "updated_at": firestore.SERVER_TIMESTAMP,
-                },
-                merge=True,
-            )
-            chapter_refs.append((chapter_id, chapter_ref))
-        events.record(
-            video_id,
-            "chapters",
-            "chapters_persisted",
-            "Capítulos sugeridos foram armazenados",
-            details={"chapter_count": len(chapter_refs)},
-        )
 
         _stage(ref, VideoStatus.RENDERING_DRAFTS)
         events.record(
@@ -317,9 +338,8 @@ def process_video(video_id: str) -> None:
         )
         errors: list[str] = []
         for chapter_id, chapter_ref in chapter_refs:
-            chapter = chapter_ref.get().to_dict() or {}
             try:
-                render_chapter(video_id, chapter_id, RenderRequest(), final=False)
+                _render_or_adopt(video_id, chapter_id, RenderRequest(), final=False, resume=resume)
             except Exception as exc:
                 errors.append(f"{chapter_id}: {exc}")
         if errors:
@@ -327,6 +347,69 @@ def process_video(video_id: str) -> None:
         _stage(ref, VideoStatus.PENDING_REVIEW, clear_error=True)
     except Exception as exc:
         _set_error(ref, exc)
+
+
+def _stored_chapters(ref) -> list[tuple[str, object]]:
+    return sorted(
+        ((document.id, document.reference) for document in ref.collection("chapters").stream()),
+        key=lambda item: item[0],
+    )
+
+
+def _render_or_adopt(video_id: str, chapter_id: str, options: RenderRequest, *, final: bool, resume: bool) -> dict:
+    """Render a chapter, or on resume reuse what an interrupted run already produced.
+
+    Order: a completed render is kept; otherwise a render the worker finished
+    or is still running is adopted; only then a new render is dispatched.
+    """
+
+    if not resume:
+        return render_chapter(video_id, chapter_id, options, final=final)
+    kind = "final" if final else "draft"
+    chapter = _video_ref(video_id).collection("chapters").document(chapter_id).get().to_dict() or {}
+    if chapter.get(f"{kind}_status") == "COMPLETED" and chapter.get(f"{kind}_gcs_path"):
+        events.record(
+            video_id, "render", f"{kind}_render_reused", f"Render {kind} já concluído em {chapter_id}",
+            details={"chapter_id": chapter_id, "render_id": chapter.get(f"{kind}_render_id")},
+        )
+        return {"render_id": chapter.get(f"{kind}_render_id"), "gcs_path": chapter[f"{kind}_gcs_path"], "status": "COMPLETED"}
+    render_id = chapter.get(f"{kind}_render_id")
+    if render_id and vertical_render.worker_state(video_id, render_id) in {"COMPLETED", "PROCESSING"}:
+        events.record(
+            video_id, "render", f"{kind}_render_adopted", f"Render {kind} de {chapter_id} retomado do worker",
+            details={"chapter_id": chapter_id, "render_id": render_id},
+        )
+        try:
+            return render_chapter(video_id, chapter_id, options, final=final, adopt_render_id=render_id)
+        except vertical_render.RenderUnavailable:
+            logger.warning("Render %s sem resultado no worker; renderizando de novo", render_id)
+    return render_chapter(video_id, chapter_id, options, final=final)
+
+
+def _submit_or_adopt(video_id: str, render_id: str, payload: dict) -> dict:
+    """Dispatch a render; if the connection fails, adopt the worker's own result.
+
+    A 502/503/504 or a dropped connection says nothing about the render: the
+    worker keeps going and records its result in Firestore. Failing the chapter
+    here would discard a render that is about to succeed.
+    """
+
+    try:
+        return vertical_render.submit(payload)
+    except Exception as exc:
+        if not vertical_render.is_recoverable(exc):
+            raise
+        logger.warning("Render %s: %s; aguardando o resultado registrado pelo worker", render_id, exc)
+        events.record(
+            video_id, "render", "render_connection_lost",
+            "A conexão com o worker caiu; aguardando o resultado registrado por ele",
+            level="WARNING",
+            details={"render_id": render_id, "error_type": type(exc).__name__, "error_message": str(exc)[:500]},
+        )
+        try:
+            return vertical_render.await_result(video_id, render_id)
+        except vertical_render.RenderUnavailable:
+            raise exc
 
 
 def _render_horizontal_cut(video: dict, chapter: dict, video_id: str, chapter_id: str, render_id: str) -> str:
@@ -382,8 +465,14 @@ def _render_horizontal_cut(video: dict, chapter: dict, video_id: str, chapter_id
     return target
 
 
-def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, final: bool) -> dict:
-    """Persist and dispatch one draft/final render in a retry-safe path."""
+def render_chapter(
+    video_id: str, chapter_id: str, options: RenderRequest, *, final: bool, adopt_render_id: str | None = None
+) -> dict:
+    """Persist and dispatch one draft/final render in a retry-safe path.
+
+    With ``adopt_render_id`` no new render is dispatched: the result the worker
+    recorded for that existing render is awaited and recorded as usual.
+    """
 
     video_ref = _video_ref(video_id)
     video = video_ref.get().to_dict() or {}
@@ -405,22 +494,28 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
         if update["camera_plan_gcs_path"]:
             update["focal_strategy_version"] = stored.get("focal_strategy_version") or 0
         options = options.model_copy(update=update)
-    render_id = f"{kind}_{uuid.uuid4().hex[:10]}"
+    render_id = adopt_render_id or f"{kind}_{uuid.uuid4().hex[:10]}"
     target = f"{video_id}/chapters/{chapter_id}/{render_id}.mp4"
     render_ref = chapter_ref.collection("renders").document(render_id)
     persisted_options = options.model_dump(mode="json")
-    render_ref.set(
-        {
-            "id": render_id,
-            "kind": kind,
-            "status": "QUEUED",
-            "target_gcs_path": target,
-            "options": persisted_options,
-            "created_at": firestore.SERVER_TIMESTAMP,
-            "updated_at": firestore.SERVER_TIMESTAMP,
-        }
-    )
-    chapter_ref.update({f"{kind}_status": "PROCESSING", f"{kind}_render_id": render_id, "updated_at": firestore.SERVER_TIMESTAMP})
+    if adopt_render_id:
+        stored_render = render_ref.get().to_dict() or {}
+        target = stored_render.get("target_gcs_path") or target
+        persisted_options = stored_render.get("options") or persisted_options
+        chapter_ref.update({f"{kind}_status": "PROCESSING", f"{kind}_render_id": render_id, "updated_at": firestore.SERVER_TIMESTAMP})
+    else:
+        render_ref.set(
+            {
+                "id": render_id,
+                "kind": kind,
+                "status": "QUEUED",
+                "target_gcs_path": target,
+                "options": persisted_options,
+                "created_at": firestore.SERVER_TIMESTAMP,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            }
+        )
+        chapter_ref.update({f"{kind}_status": "PROCESSING", f"{kind}_render_id": render_id, "updated_at": firestore.SERVER_TIMESTAMP})
 
     chapter_start = float(chapter["start_seconds"])
     captions = [
@@ -538,7 +633,10 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
         bool(text_overlays),
     )
     try:
-        result = vertical_render.submit(payload)
+        if adopt_render_id:
+            result = vertical_render.await_result(video_id, render_id)
+        else:
+            result = _submit_or_adopt(video_id, render_id, payload)
         # Persist the worker's framing artifacts so the next render (typically
         # the final) can reuse them. The strategy version is always recorded —
         # even without points/plans — so stale artifacts from older strategies
@@ -639,6 +737,8 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
         )
         return {"render_id": render_id, "gcs_path": output_path, "status": "COMPLETED"}
     except Exception as exc:
+        if adopt_render_id and isinstance(exc, vertical_render.RenderUnavailable):
+            raise
         render_ref.update({"status": "ERROR", "error": str(exc), "updated_at": firestore.SERVER_TIMESTAMP})
         fresh = chapter_ref.get().to_dict() or {}
         if fresh.get(f"{kind}_render_id") == render_id:
@@ -680,8 +780,19 @@ def render_chapter(video_id: str, chapter_id: str, options: RenderRequest, *, fi
         raise
 
 
-def render_final_chapters(video_id: str, chapter_ids: list[str]) -> None:
-    """Render selected chapters and complete the parent only if all succeed."""
+def render_final_chapters(video_id: str, chapter_ids: list[str], resume: bool = False) -> None:
+    """Run the finals batch while holding the heartbeat lease."""
+
+    with lease.pipeline_lease(video_id):
+        _render_final_chapters(video_id, chapter_ids, resume)
+
+
+def _render_final_chapters(video_id: str, chapter_ids: list[str], resume: bool) -> None:
+    """Render selected chapters and complete the parent only if all succeed.
+
+    With ``resume`` finals that already completed are kept and renders the
+    worker finished or is still running are adopted.
+    """
 
     video_ref = _video_ref(video_id)
     _stage(video_ref, VideoStatus.RENDERING_FINALS)
@@ -699,7 +810,7 @@ def render_final_chapters(video_id: str, chapter_ids: list[str]) -> None:
         raw_options = chapter.get("render_options") or {}
         raw_options["final"] = True
         try:
-            render_chapter(video_id, chapter_id, RenderRequest.model_validate(raw_options), final=True)
+            _render_or_adopt(video_id, chapter_id, RenderRequest.model_validate(raw_options), final=True, resume=resume)
         except Exception as exc:
             errors.append(f"{chapter_id}: {exc}")
     if errors:

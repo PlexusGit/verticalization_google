@@ -187,11 +187,11 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         "<b>Rascunhos em série:</b> os capítulos são renderizados um a um; falhas são acumuladas e levantadas depois do laço (um capítulo ruim não impede os demais de renderizar, mas o vídeo termina em <code>ERROR</code>)."
       ],
       "refs": [
-        {"label": "process_video — todo o pipeline de pré-processamento", "path": "app/services/processing.py", "start": 106, "end": 329, "symbol": "def process_video"},
-        {"label": "_stage / _set_error — transições de estado e erro", "path": "app/services/processing.py", "start": 732, "end": 748, "symbol": "def _stage"},
+        {"label": "process_video — todo o pipeline de pré-processamento", "path": "app/services/processing.py", "start": 113, "end": 349, "symbol": "def _process_video"},
+        {"label": "_stage / _set_error — transições de estado e erro", "path": "app/services/processing.py", "start": 843, "end": 859, "symbol": "def _stage"},
         {"label": "events.record — log estruturado + histórico durável", "path": "app/services/events.py", "start": 31, "end": 66, "symbol": "def record"},
         {"label": "VideoStatus — estados possíveis", "path": "app/models.py", "start": 53, "end": 62, "symbol": "class VideoStatus"},
-        {"label": "POST /retry — retoma a partir de ERROR/UPLOADING", "path": "app/routers/api.py", "start": 1007, "end": 1019, "symbol": "async def retry_video"}
+        {"label": "POST /retry — retoma a partir de ERROR/UPLOADING", "path": "app/routers/api.py", "start": 1046, "end": 1058, "symbol": "async def retry_video"}
       ]
     },
     {
@@ -231,7 +231,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"label": "build_video_command — comando ffmpeg do vídeo normalizado", "path": "transcode_function/processor.py", "start": 249, "end": 268, "symbol": "def build_video_command"},
         {"label": "build_audio_command — blocos MP3 mono 16 kHz com lista de segmentos", "path": "transcode_function/processor.py", "start": 286, "end": 303, "symbol": "def build_audio_command"},
         {"label": "read_audio_segments — offsets exatos a partir do CSV do ffmpeg", "path": "transcode_function/processor.py", "start": 309, "end": 328, "symbol": "def read_audio_segments"},
-                {"label": "app: bloco de transcode dentro de process_video (inclui a regra de reuso dos blocos)", "path": "app/services/processing.py", "start": 131, "end": 196, "symbol": "result = transcode.submit"}
+                {"label": "app: bloco de transcode dentro de process_video (inclui a regra de reuso dos blocos)", "path": "app/services/processing.py", "start": 141, "end": 206, "symbol": "result = transcode.submit"}
       ]
     },
     {
@@ -264,7 +264,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"label": "Chirp 3 (fallback): transcribe_chunks", "path": "app/services/chirp.py", "start": 264, "end": 298, "symbol": "def transcribe_chunks"},
         {"label": "Chirp 3 (fallback): _recognize — regiões alternadas e backoff", "path": "app/services/chirp.py", "start": 149, "end": 241, "symbol": "def _recognize"},
         {"label": "SRT: parse_srt / to_srt / slice_srt", "path": "app/services/srt.py", "start": 33, "end": 70, "symbol": "def parse_srt"},
-        {"label": "bloco de transcrição dentro de process_video", "path": "app/services/processing.py", "start": 198, "end": 256, "symbol": "subtitles.transcribe_audio_chunks"}
+        {"label": "bloco de transcrição dentro de process_video", "path": "app/services/processing.py", "start": 208, "end": 266, "symbol": "subtitles.transcribe_audio_chunks"}
       ]
     },
     {
@@ -284,8 +284,8 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"label": "prompt padrão e registro de prompts", "path": "app/services/prompts.py", "start": 16, "end": 36, "symbol": "DEFAULT_CHAPTER_PROMPT"},
         {"label": "get_prompt — override do Firestore ou padrão", "path": "app/services/prompts.py", "start": 43, "end": 51, "symbol": "def get_prompt"},
         {"label": "slice_srt — recorte e deslocamento para tempo relativo", "path": "app/services/srt.py", "start": 62, "end": 70, "symbol": "def slice_srt"},
-        {"label": "criação dos capítulos dentro de process_video", "path": "app/services/processing.py", "start": 257, "end": 308, "symbol": "suggestions = gemini.suggest_chapters"},
-        {"label": "POST /regenerate-chapters — substitui todos os capítulos", "path": "app/routers/api.py", "start": 768, "end": 796, "symbol": "async def regenerate_chapters"}
+        {"label": "criação dos capítulos dentro de process_video", "path": "app/services/processing.py", "start": 278, "end": 329, "symbol": "suggestions = gemini.suggest_chapters"},
+        {"label": "POST /regenerate-chapters — substitui todos os capítulos", "path": "app/routers/api.py", "start": 807, "end": 835, "symbol": "async def regenerate_chapters"}
       ]
     },
     {
@@ -301,13 +301,13 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         "<b>Após o render:</b> o worker sobe o MP4 e responde com o caminho de saída e os artefatos de enquadramento; o app grava <code>renders/{id}</code> como <code>COMPLETED</code> e, se este for o render mais recente, atualiza o capítulo (veja <i>Concorrência</i>)."
       ],
       "refs": [
-        {"label": "render_chapter — registro, payload, chamada ao worker e persistência", "path": "app/services/processing.py", "start": 385, "end": 680, "symbol": "def render_chapter"},
-        {"label": "montagem do payload enviado ao worker", "path": "app/services/processing.py", "start": 478, "end": 511, "symbol": "payload = {"},
-        {"label": "vertical_render.submit — HTTP com retry de rede", "path": "app/services/vertical_render.py", "start": 23, "end": 59, "symbol": "def submit"},
-        {"label": "worker: vertical_render — auth, validação, download, motor, upload", "path": "vertical_render_function/main.py", "start": 260, "end": 350, "symbol": "def vertical_render"},
+        {"label": "render_chapter — registro, payload, chamada ao worker e persistência", "path": "app/services/processing.py", "start": 468, "end": 780, "symbol": "def render_chapter"},
+        {"label": "montagem do payload enviado ao worker", "path": "app/services/processing.py", "start": 573, "end": 606, "symbol": "payload = {"},
+        {"label": "vertical_render.submit — HTTP com retry de rede", "path": "app/services/vertical_render.py", "start": 104, "end": 140, "symbol": "def submit"},
+        {"label": "worker: vertical_render — auth, validação, download, motor, upload", "path": "vertical_render_function/main.py", "start": 264, "end": 358, "symbol": "def vertical_render"},
         {"label": "worker: validate_request — contrato do payload", "path": "vertical_render_function/renderer.py", "start": 116, "end": 183, "symbol": "def validate_request"},
-        {"label": "worker: seleção do motor e fallback determinístico", "path": "vertical_render_function/main.py", "start": 312, "end": 332, "symbol": "strategy_version = FOCAL_STRATEGY_VERSION"},
-        {"label": "loop de rascunhos dentro de process_video", "path": "app/services/processing.py", "start": 310, "end": 327, "symbol": "_stage(ref, VideoStatus.RENDERING_DRAFTS)"}
+        {"label": "worker: seleção do motor e fallback determinístico", "path": "vertical_render_function/main.py", "start": 316, "end": 336, "symbol": "strategy_version = FOCAL_STRATEGY_VERSION"},
+        {"label": "loop de rascunhos dentro de process_video", "path": "app/services/processing.py", "start": 331, "end": 348, "symbol": "_stage(ref, VideoStatus.RENDERING_DRAFTS)"}
       ]
     },
     {
@@ -345,8 +345,8 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
           {"label": "plan_fingerprint — identidade de tudo que o plano usa", "path": "vertical_render_function/autoframe_v10/artifacts.py", "start": 54, "end": 71, "symbol": "def plan_fingerprint"},
           {"label": "campos de configuração no fingerprint", "path": "vertical_render_function/autoframe_v10/artifacts.py", "start": 21, "end": 34, "symbol": "_FINGERPRINT_FIELDS"},
           {"label": "dumps/loads do plano (gzip) e caminho do artefato", "path": "vertical_render_function/autoframe_v10/artifacts.py", "start": 74, "end": 88, "symbol": "def dumps_plan"},
-          {"label": "worker: reuso ou análise + publicação do plano", "path": "vertical_render_function/main.py", "start": 194, "end": 257, "symbol": "expected_fp = artifacts.plan_fingerprint"},
-          {"label": "app: persistência dos artefatos devolvidos pelo worker", "path": "app/services/processing.py", "start": 540, "end": 572, "symbol": "result = vertical_render.submit"}
+          {"label": "worker: reuso ou análise + publicação do plano", "path": "vertical_render_function/main.py", "start": 198, "end": 261, "symbol": "expected_fp = artifacts.plan_fingerprint"},
+          {"label": "app: persistência dos artefatos devolvidos pelo worker", "path": "app/services/processing.py", "start": 636, "end": 673, "symbol": "result = _submit_or_adopt"}
         ]}
       ],
       "io": {"in": "Fonte <code>_high.mp4</code>, <code>trim_start/end</code>, dispositivo e encoder.", "out": "MP4 1080×1920 H.264/AAC + plano gzip no GCS."},
@@ -383,8 +383,8 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"label": "write_ass_captions — SRT absoluto → ASS", "path": "vertical_render_function/renderer.py", "start": 523, "end": 551, "symbol": "def write_ass_captions"},
         {"label": "build_overlay_filters — legendas, logo e títulos", "path": "vertical_render_function/renderer.py", "start": 432, "end": 513, "symbol": "def build_overlay_filters"},
         {"label": "_layout_title_box — quebra e ajuste do título", "path": "vertical_render_function/renderer.py", "start": 331, "end": 367, "symbol": "def _layout_title_box"},
-        {"label": "app: cues absolutos e conversão de % para pixels", "path": "app/services/processing.py", "start": 425, "end": 477, "symbol": "chapter_start = float"},
-        {"label": "app: captions só nos finais", "path": "app/services/processing.py", "start": 498, "end": 500, "symbol": "\"captions\": captions if final else []"},
+        {"label": "app: cues absolutos e conversão de % para pixels", "path": "app/services/processing.py", "start": 520, "end": 572, "symbol": "chapter_start = float"},
+        {"label": "app: captions só nos finais", "path": "app/services/processing.py", "start": 595, "end": 597, "symbol": "\"captions\": captions if final else []"},
         {"label": "UI: simulação de legendas no editor", "path": "app/templates/video_detail.html", "start": 92, "end": 93, "symbol": "function parseCues"}
       ]
     },
@@ -399,11 +399,11 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         "<b>Adicionar/excluir/regenerar:</b> capítulos manuais ganham rascunho automático; <code>regenerate-chapters</code> apaga todos e recria a partir do SRT atual."
       ],
       "refs": [
-        {"label": "GET /api/video/{id} — vídeo, capítulos e URLs assinadas", "path": "app/routers/api.py", "start": 593, "end": 619, "symbol": "async def video_detail"},
-        {"label": "PUT /chapters/{id} — salva revisão e reagenda o rascunho", "path": "app/routers/api.py", "start": 647, "end": 701, "symbol": "async def update_chapter"},
-        {"label": "_can_render_draft — condição para renderizar", "path": "app/routers/api.py", "start": 704, "end": 715, "symbol": "def _can_render_draft"},
-        {"label": "POST /chapters — adicionar capítulo", "path": "app/routers/api.py", "start": 718, "end": 754, "symbol": "async def add_chapter"},
-        {"label": "POST /chapters/{id}/render — novo preview", "path": "app/routers/api.py", "start": 814, "end": 868, "symbol": "async def queue_render"},
+        {"label": "GET /api/video/{id} — vídeo, capítulos e URLs assinadas", "path": "app/routers/api.py", "start": 631, "end": 658, "symbol": "async def video_detail"},
+        {"label": "PUT /chapters/{id} — salva revisão e reagenda o rascunho", "path": "app/routers/api.py", "start": 686, "end": 740, "symbol": "async def update_chapter"},
+        {"label": "_can_render_draft — condição para renderizar", "path": "app/routers/api.py", "start": 743, "end": 754, "symbol": "def _can_render_draft"},
+        {"label": "POST /chapters — adicionar capítulo", "path": "app/routers/api.py", "start": 757, "end": 793, "symbol": "async def add_chapter"},
+        {"label": "POST /chapters/{id}/render — novo preview", "path": "app/routers/api.py", "start": 853, "end": 907, "symbol": "async def queue_render"},
         {"label": "UI: load() e polling da página", "path": "app/templates/video_detail.html", "start": 59, "end": 59, "symbol": "async function load"},
         {"label": "UI: observação do novo preview (spinner + 30 s)", "path": "app/templates/video_detail.html", "start": 84, "end": 84, "symbol": "function startPreviewWatch"},
         {"label": "UI: requestRender — dispara o novo preview", "path": "app/templates/video_detail.html", "start": 97, "end": 97, "symbol": "async function requestRender"},
@@ -422,12 +422,12 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         "<b>Render final:</b> usa as <code>render_options</code> do capítulo (modo, âncoras, estilo) com <code>final=true</code> — agora com legendas e branding — e reaproveita o plano de câmera do rascunho. Os capítulos rodam em série; se algum falhar, o vídeo vai a <code>ERROR</code> e <code>retry-finals</code> refaz apenas os que não concluíram."
       ],
       "refs": [
-        {"label": "POST /approve — resolve templates, trava e agenda", "path": "app/routers/api.py", "start": 871, "end": 959, "symbol": "async def approve"},
+        {"label": "POST /approve — resolve templates, trava e agenda", "path": "app/routers/api.py", "start": 910, "end": 998, "symbol": "async def approve"},
         {"label": "_approval_block_reason — pré-condições", "path": "app/routers/api.py", "start": 65, "end": 75, "symbol": "def _approval_block_reason"},
         {"label": "_template_branding — macros e geometria", "path": "app/routers/api.py", "start": 78, "end": 107, "symbol": "def _template_branding"},
         {"label": "_resolve_template_choice — explícito, none ou padrão", "path": "app/routers/api.py", "start": 366, "end": 375, "symbol": "def _resolve_template_choice"},
-        {"label": "render_final_chapters — lote de finais", "path": "app/services/processing.py", "start": 683, "end": 725, "symbol": "def render_final_chapters"},
-        {"label": "POST /retry-finals — refaz só os finais com falha", "path": "app/routers/api.py", "start": 1022, "end": 1052, "symbol": "async def retry_final_renders"}
+        {"label": "render_final_chapters — lote de finais", "path": "app/services/processing.py", "start": 790, "end": 836, "symbol": "def _render_final_chapters"},
+        {"label": "POST /retry-finals — refaz só os finais com falha", "path": "app/routers/api.py", "start": 1065, "end": 1095, "symbol": "async def retry_final_renders"}
       ]
     },
     {
@@ -445,8 +445,8 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         "Uma falha aqui <b>não invalida</b> o final vertical: grava <code>horizontal_status=ERROR</code> e <code>horizontal_error</code>."
       ],
       "refs": [
-        {"label": "_render_horizontal_cut — ffmpeg do corte 16:9", "path": "app/services/processing.py", "start": 332, "end": 382, "symbol": "def _render_horizontal_cut"},
-        {"label": "integração após o final vertical (estado + erro isolado)", "path": "app/services/processing.py", "start": 594, "end": 616, "symbol": "_render_horizontal_cut(video, chapter"}
+        {"label": "_render_horizontal_cut — ffmpeg do corte 16:9", "path": "app/services/processing.py", "start": 415, "end": 465, "symbol": "def _render_horizontal_cut"},
+        {"label": "integração após o final vertical (estado + erro isolado)", "path": "app/services/processing.py", "start": 692, "end": 714, "symbol": "_render_horizontal_cut(video, chapter"}
       ]
     },
     {
@@ -457,16 +457,26 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         "<b>Falha de render:</b> grava <code>renders/{id}.error</code>; só o render mais recente marca o capítulo como <code>ERROR</code>. O erro sempre é relançado para o chamador.",
         "<b>Retentativas de rede</b> no cliente do worker (2× com 10 s/30 s); <b>fallback de encoder</b> (NVENC → libx264) tanto no transcode quanto no v10; <b>fallback de enquadramento</b> (v10 → recorte central determinístico).",
         "<b>Estado durável:</b> cada etapa persiste antes de avançar; <code>retry</code> e <code>retry-finals</code> retomam sem refazer o que já existe.",
+        "<b>Nunca fica preso:</b> enquanto um lote roda, o app renova <code>heartbeat_at</code> a cada 30 s (<code>pipeline_lease</code>). Se a instância morrer (deploy, escala, crash), o heartbeat para; um vídeo em status de trabalho sem heartbeat há &gt;150 s é <i>stale</i>. Ao abrir ou listar o vídeo, o app o reivindica numa transação do Firestore (só um vence) e <b>retoma</b> o pipeline, no máximo 3 vezes seguidas — depois vira <code>ERROR</code> com mensagem clara.",
+        "<b>Retomada sem repetir trabalho:</b> capítulos já salvos não são sugeridos de novo, rascunhos/finais concluídos são mantidos e renders que o worker terminou (ou ainda executa) são <i>adotados</i> a partir do registro que ele grava em <code>videos/{id}/renders/{render_id}</code> (inclui o <code>result</code> completo). Só o que nunca foi despachado é renderizado. O botão <b>Tentar novamente</b> usa o mesmo caminho.",
+        "<b>Erro de gateway não derruba o render:</b> 502/503/504 ou conexão caída dizem pouco sobre o worker, que continua renderizando. O app aguarda o resultado registrado pelo worker (limitado pelos 3600 s do pedido) em vez de marcar o capítulo como <code>ERROR</code>; só falha se o worker nunca registrou o render ou registrou um erro.",
         "<b>Botões não repetíveis:</b> a interface desabilita ações assíncronas (render, salvar, adicionar) até a resposta — a trava do servidor (<code>approved_at</code>) é a segunda linha de defesa.",
         "<b>Segurança:</b> workers com <code>X-API-Key</code> e comparação em tempo constante, falha fechada sem segredo; caminhos de GCS validados (sem <code>..</code>, <code>gs://</code> ou <code>/</code>); ffmpeg sempre por lista de argumentos, nunca shell."
       ],
       "refs": [
-        {"label": "guarda do render mais recente (sucesso)", "path": "app/services/processing.py", "start": 573, "end": 593, "symbol": "fresh = chapter_ref.get().to_dict()"},
-        {"label": "tratamento de falha e relançamento", "path": "app/services/processing.py", "start": 641, "end": 680, "symbol": "except Exception as exc"},
+        {"label": "lease: pipeline_lease — heartbeat enquanto o lote roda", "path": "app/services/lease.py", "start": 76, "end": 106, "symbol": "def pipeline_lease"},
+        {"label": "lease: is_stale — vídeo sem heartbeat há mais de 150 s", "path": "app/services/lease.py", "start": 58, "end": 72, "symbol": "def is_stale"},
+        {"label": "lease: claim_resume — reivindicação atômica (transação)", "path": "app/services/lease.py", "start": 134, "end": 154, "symbol": "def claim_resume"},
+        {"label": "api: _resume_if_stale — retoma ao abrir/listar o vídeo", "path": "app/routers/api.py", "start": 582, "end": 611, "symbol": "def _resume_if_stale"},
+        {"label": "app: _render_or_adopt — mantém, adota ou despacha", "path": "app/services/processing.py", "start": 359, "end": 386, "symbol": "def _render_or_adopt"},
+        {"label": "app: _submit_or_adopt — erro de gateway adota o resultado do worker", "path": "app/services/processing.py", "start": 389, "end": 412, "symbol": "def _submit_or_adopt"},
+        {"label": "app: await_result — espera o resultado registrado pelo worker", "path": "app/services/vertical_render.py", "start": 67, "end": 101, "symbol": "def await_result"},
+        {"label": "guarda do render mais recente (sucesso)", "path": "app/services/processing.py", "start": 671, "end": 691, "symbol": "fresh = chapter_ref.get().to_dict()"},
+        {"label": "tratamento de falha e relançamento", "path": "app/services/processing.py", "start": 712, "end": 751, "symbol": "except Exception as exc"},
         {"label": "fallback NVENC → libx264 no transcode", "path": "transcode_function/processor.py", "start": 519, "end": 532, "symbol": "encoder_used"},
         {"label": "fallback de encoder no v10", "path": "vertical_render_function/autoframe_v10/render.py", "start": 224, "end": 247, "symbol": "attempts = "},
-        {"label": "fallback v10 → recorte central determinístico", "path": "vertical_render_function/main.py", "start": 327, "end": 332, "symbol": "recorte central determin"},
-        {"label": "autenticação dos workers (falha fechada)", "path": "vertical_render_function/main.py", "start": 103, "end": 106, "symbol": "def _authorized"}
+        {"label": "fallback v10 → recorte central determinístico", "path": "vertical_render_function/main.py", "start": 331, "end": 336, "symbol": "recorte central determin"},
+        {"label": "autenticação dos workers (falha fechada)", "path": "vertical_render_function/main.py", "start": 107, "end": 110, "symbol": "def _authorized"}
       ]
     },
     {
@@ -478,9 +488,9 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         "<b>Exclusão:</b> <code>DELETE /api/video/{id}</code> remove renders, capítulos e todo o prefixo <code>{video_id}/</code> do bucket."
       ],
       "refs": [
-        {"label": "download — redireciona para URL assinada", "path": "app/routers/api.py", "start": 962, "end": 972, "symbol": "async def download_render"},
+        {"label": "download — redireciona para URL assinada", "path": "app/routers/api.py", "start": 1001, "end": 1011, "symbol": "async def download_render"},
         {"label": "signed_url — URL V4 (chave local ou IAM)", "path": "app/services/storage.py", "start": 79, "end": 100, "symbol": "def signed_url"},
-        {"label": "DELETE vídeo — Firestore + storage", "path": "app/routers/api.py", "start": 1055, "end": 1068, "symbol": "async def delete_video"},
+        {"label": "DELETE vídeo — Firestore + storage", "path": "app/routers/api.py", "start": 1098, "end": 1111, "symbol": "async def delete_video"},
         {"label": "delete_prefix", "path": "app/services/storage.py", "start": 103, "end": 107, "symbol": "def delete_prefix"}
       ]
     },

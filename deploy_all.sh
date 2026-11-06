@@ -17,6 +17,7 @@ RENDER_DEPLOYED_URL="$(service_url "${VERTICAL_RENDER_SERVICE_NAME:-plexus-verti
 upsert_env VERTICAL_RENDER_URL "${RENDER_DEPLOYED_URL}"
 
 echo "3/5 — Aplicação principal"
+PREVIOUS_DOMAIN="${CLOUD_RUN_DOMAIN:-${DOMAIN:-}}"
 APP_URL="$("${ROOT}/deploy.sh" | tail -n1)"
 upsert_env CLOUD_RUN_DOMAIN "${APP_URL}"
 upsert_env DOMAIN "${APP_URL}"
@@ -24,7 +25,11 @@ upsert_env MAIN_API_URL "${APP_URL}"
 upsert_env GCS_MAIN_BUCKET "${BUCKET_NAME}"
 
 # Redeploy once so the signed session cookie and generated URLs use the final domain.
-"${ROOT}/deploy.sh" >/dev/null
+# Skipped when the domain was already configured: every deploy replaces the app
+# instance, which interrupts any pipeline running in the background.
+if [[ "${APP_URL}" != "${PREVIOUS_DOMAIN}" ]]; then
+  "${ROOT}/deploy.sh" >/dev/null
+fi
 
 echo "4/5 — Importador GCS"
 if [[ -n "${GCS_WATCH_BUCKET:-}" ]]; then "${ROOT}/watch-folder-functions/process_gcs_bucket/deploy.sh"; else echo "Ignorado: GCS_WATCH_BUCKET vazio."; fi

@@ -17,7 +17,7 @@ from app.auth import get_current_user, request_is_admin, request_is_authenticate
 from app.config import settings
 from app.db import get_db
 from app.models import AllowedUserInput, ApprovalRequest, BrandingOptions, ChapterInput, ImportGCSRequest, PromptUpdate, RenderRequest, VideoStatus, VideoTemplateInput
-from app.services import gemini, prompts, srt, storage
+from app.services import events, gemini, lease, prompts, srt, storage
 from app.services.processing import (
     create_video_record,
     process_video,
@@ -576,14 +576,52 @@ async def update_template(
     return JSONResponse({"id": template_id, "title": payload.title})
 
 
+_MAX_RESUMES_PER_LISTING = 3
+
+
+def _resume_if_stale(video_id: str, data: dict, background_tasks: BackgroundTasks) -> bool:
+    """Resume a pipeline whose instance died, so a video can never stay stuck.
+
+    A working video whose heartbeat stopped is claimed atomically (only one
+    request wins) and resumed in the background; after too many interruptions
+    it is put in ERROR so the user can decide.
+    """
+
+    if not lease.is_stale(data, video_id):
+        return False
+    action = lease.claim_resume(video_id)
+    if action == "resume":
+        events.record(
+            video_id, "pipeline", "pipeline_resumed",
+            "O processamento foi interrompido (reinício do servidor?); retomando de onde parou",
+            level="WARNING",
+            details={"status": data.get("status"), "resume_count": int(data.get("resume_count") or 0) + 1},
+        )
+        if data.get("status") == VideoStatus.RENDERING_FINALS.value:
+            background_tasks.add_task(render_final_chapters, video_id, list(data.get("approved_chapter_ids") or []), True)
+        else:
+            background_tasks.add_task(process_video, video_id, True)
+        return True
+    if action == "give_up":
+        events.record(
+            video_id, "pipeline", "pipeline_resume_gave_up",
+            "O processamento foi interrompido várias vezes seguidas", level="ERROR",
+            details={"status": data.get("status")},
+        )
+    return False
+
+
 @router.get("/videos")
-async def list_videos(request: Request, status: str | None = None):
+async def list_videos(request: Request, background_tasks: BackgroundTasks, status: str | None = None):
     if response := _unauthorized(request):
         return response
     query = get_db().collection(settings.COLLECTION_VIDEOS).order_by("created_at", direction=firestore.Query.DESCENDING).limit(100)
     videos = []
+    resumed = 0
     for document in query.stream():
         data = document.to_dict() or {}
+        if resumed < _MAX_RESUMES_PER_LISTING and _resume_if_stale(document.id, data, background_tasks):
+            resumed += 1
         if status and data.get("status") != status:
             continue
         videos.append({key: data.get(key) for key in ("id", "title", "source_filename", "source_type", "status", "duration_seconds", "error", "created_at", "updated_at")})
@@ -591,13 +629,14 @@ async def list_videos(request: Request, status: str | None = None):
 
 
 @router.get("/video/{video_id}")
-async def video_detail(request: Request, video_id: str):
+async def video_detail(request: Request, video_id: str, background_tasks: BackgroundTasks):
     if response := _unauthorized(request):
         return response
     snapshot = _video_snapshot(video_id)
     if not snapshot.exists:
         return JSONResponse({"error": "Vídeo não encontrado"}, status_code=404)
     data = snapshot.to_dict() or {}
+    _resume_if_stale(video_id, data, background_tasks)
     chapters = []
     for document in snapshot.reference.collection("chapters").stream():
         chapter = document.to_dict() or {}
@@ -1019,10 +1058,14 @@ async def retry_video(request: Request, video_id: str, background_tasks: Backgro
             "status": VideoStatus.TRANSCODING.value,
             "error": firestore.DELETE_FIELD,
             "error_type": firestore.DELETE_FIELD,
+            "resume_count": 0,
+            "heartbeat_at": firestore.SERVER_TIMESTAMP,
             "updated_at": firestore.SERVER_TIMESTAMP,
         }
     )
-    background_tasks.add_task(process_video, video_id)
+    # Resume, not restart: stored chapters, completed drafts and renders the
+    # worker finished are reused instead of repeating minutes of CPU work.
+    background_tasks.add_task(process_video, video_id, True)
     return JSONResponse({"status": "RETRYING"}, status_code=202)
 
 

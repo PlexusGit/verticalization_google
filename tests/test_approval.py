@@ -313,7 +313,7 @@ def test_retry_video_resets_status_and_clears_error_fields(monkeypatch):
     monkeypatch.setattr(api, "_unauthorized", lambda _request: None)
     monkeypatch.setattr(api, "_video_snapshot", lambda _video_id: video)
     dispatched = []
-    monkeypatch.setattr(api, "process_video", lambda vid: dispatched.append(vid))
+    monkeypatch.setattr(api, "process_video", lambda vid, resume=False: dispatched.append((vid, resume)))
 
     response = client.post("/api/video/v_test/retry")
 
@@ -322,7 +322,9 @@ def test_retry_video_resets_status_and_clears_error_fields(monkeypatch):
     assert update["status"] == VideoStatus.TRANSCODING.value
     assert update["error"] is firestore.DELETE_FIELD
     assert update["error_type"] is firestore.DELETE_FIELD
-    assert dispatched == ["v_test"]
+    assert update["resume_count"] == 0
+    # Retry resumes: stored chapters and finished renders are reused.
+    assert dispatched == [("v_test", True)]
 
 
 def test_retry_video_rejects_non_error_status(monkeypatch):
