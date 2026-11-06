@@ -51,7 +51,8 @@ docker push "${IMAGE}"
 GPU_ARGS=()
 MEMORY="8Gi"
 if [[ "${USE_GPU}" == "1" ]]; then
-  GPU_ARGS=(--gpu=1 --gpu-type=nvidia-l4 --no-gpu-zonal-redundancy)
+  # GPU requires instance-based billing (--no-cpu-throttling).
+  GPU_ARGS=(--gpu=1 --gpu-type=nvidia-l4 --no-gpu-zonal-redundancy --no-cpu-throttling)
   MEMORY="16Gi"
 else
   # --gpu=0 is required: Cloud Run deploy flags are sticky, so omitting --gpu

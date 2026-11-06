@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -102,6 +103,31 @@ def update_status(
         batch.commit()
     except Exception:
         logger.exception("Unable to update Firestore status for render %s", render_id)
+
+
+_HEARTBEAT_SECONDS = 45
+
+
+def _heartbeat_loop(video_id: str, render_id: str, stop: threading.Event) -> None:
+    """Ping the render document while a render runs.
+
+    The caller polls this document to adopt results after a lost connection;
+    a stale heartbeat is how it tells a lost render (killed instance) from a
+    slow one, so it can resubmit promptly instead of waiting for the request
+    timeout cap. Only heartbeat_at is written — never the status.
+    """
+    ref = (
+        firestore_client()
+        .collection(VIDEOS_COLLECTION)
+        .document(video_id)
+        .collection("renders")
+        .document(render_id)
+    )
+    while not stop.wait(_HEARTBEAT_SECONDS):
+        try:
+            ref.set({"heartbeat_at": firestore.SERVER_TIMESTAMP}, merge=True)
+        except Exception:
+            logger.warning("Heartbeat do render %s falhou", render_id, exc_info=True)
 
 
 def _authorized(request: Any) -> bool:
@@ -288,7 +314,9 @@ def vertical_render(request: Any):
     except ValidationError as exc:
         return ({"error": str(exc)}, 400, _cors_headers())
 
-    update_status(video_id, render_id, chapter_id, "PROCESSING", started_at=firestore.SERVER_TIMESTAMP, error=firestore.DELETE_FIELD)
+    update_status(video_id, render_id, chapter_id, "PROCESSING", started_at=firestore.SERVER_TIMESTAMP, heartbeat_at=firestore.SERVER_TIMESTAMP, error=firestore.DELETE_FIELD)
+    heartbeat_stop = threading.Event()
+    threading.Thread(target=_heartbeat_loop, args=(video_id, render_id, heartbeat_stop), daemon=True).start()
     logger.info(
         "Render recebido video=%s chapter=%s render=%s trecho=%.1fs–%.1fs modo=%s engine=%s",
         video_id,
@@ -356,3 +384,5 @@ def vertical_render(request: Any):
         public_error = "render failed"
         update_status(video_id, render_id, chapter_id, "ERROR", error=str(exc)[:1500])
         return ({"error": public_error, "render_id": render_id}, 500, _cors_headers())
+    finally:
+        heartbeat_stop.set()

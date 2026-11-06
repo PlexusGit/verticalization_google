@@ -386,6 +386,12 @@ INITIAL_ALLOWED_EMAILS=editor1@example.com,editor2@example.com
 - `TRANSCODE_MAX_INSTANCES` (lido pelo `transcode_function/deploy.sh`): máximo de instâncias do worker de transcode — padrão 1 com GPU (a cota costuma permitir uma) e 5 em CPU. Com uma só instância e `concurrency=1`, o segundo vídeo adicionado ao mesmo tempo esperava ~30 s e o Cloud Run o abortava com `500 ... waiting too long for an available instance`.
 - `TRANSCODE_QUEUE_WAIT_SECONDS` (padrão 1800): por quanto tempo o app repete o pedido quando o Cloud Run informa que não há instância livre (429/503, ou 500 com essa mensagem). Falhas reais do worker nunca são repetidas.
 
+### `RENDER_PARALLELISM` e `RENDER_QUEUE_WAIT_SECONDS`
+
+- `RENDER_PARALLELISM` (padrão 5): quantos capítulos renderizam ao mesmo tempo no lote de rascunhos e no de finais. O serviço de render atende 1 pedido por instância e escala até `VERTICAL_RENDER_MAX_INSTANCES` (padrão 5); suba os dois juntos se quiser mais paralelismo.
+- `RENDER_QUEUE_WAIT_SECONDS` (padrão 1800): por quanto tempo o app espera uma instância de render livre quando o Cloud Run recusa o pedido por capacidade (429/503, ou 500 "available instance") — acontece quando um lote paralelo chega antes das instâncias subirem.
+- O worker de render grava `heartbeat_at` no documento do render a cada 45 s. Um `PROCESSING` sem heartbeat há mais de 300 s é considerado perdido e o app reenvia o render; uma conexão caída sem registro do worker é reenviada na hora.
+
 ### `TRANSCODE_PRESET` e `TRANSCODE_CRF`
 
 - **Fase:** opcionais; lidas pelo **worker de transcode** (só o caminho CPU/x264; o NVENC mantém o próprio ajuste).

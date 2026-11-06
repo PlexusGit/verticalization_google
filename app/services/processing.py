@@ -336,12 +336,12 @@ def _process_video(video_id: str, resume: bool) -> None:
             "Renderização dos rascunhos verticais iniciada",
             details={"chapter_count": len(chapter_refs)},
         )
-        errors: list[str] = []
-        for chapter_id, chapter_ref in chapter_refs:
-            try:
-                _render_or_adopt(video_id, chapter_id, RenderRequest(), final=False, resume=resume)
-            except Exception as exc:
-                errors.append(f"{chapter_id}: {exc}")
+        errors = _run_render_batch(
+            [
+                (chapter_id, lambda chapter_id=chapter_id: _render_or_adopt(video_id, chapter_id, RenderRequest(), final=False, resume=resume))
+                for chapter_id, _chapter_ref in chapter_refs
+            ]
+        )
         if errors:
             raise RuntimeError("falha ao renderizar rascunhos: " + "; ".join(errors))
         _stage(ref, VideoStatus.PENDING_REVIEW, clear_error=True)
@@ -386,6 +386,28 @@ def _render_or_adopt(video_id: str, chapter_id: str, options: RenderRequest, *, 
     return render_chapter(video_id, chapter_id, options, final=final)
 
 
+def _run_render_batch(tasks: list[tuple[str, object]]) -> list[str]:
+    """Run chapter renders in parallel; return per-chapter error strings.
+
+    The render service serves one request per instance and scales to several,
+    so fanning out cuts a batch from the sum of render times to the slowest
+    one. Each task is independent: it reads its own chapter, renders or adopts
+    and writes its own status.
+    """
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    errors: list[str] = []
+    with ThreadPoolExecutor(max_workers=max(1, min(len(tasks), settings.RENDER_PARALLELISM))) as pool:
+        futures = {pool.submit(task): chapter_id for chapter_id, task in tasks}
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as exc:
+                errors.append(f"{futures[future]}: {exc}")
+    return errors
+
+
 def _submit_or_adopt(video_id: str, render_id: str, payload: dict) -> dict:
     """Dispatch a render; if the connection fails, adopt the worker's own result.
 
@@ -394,22 +416,27 @@ def _submit_or_adopt(video_id: str, render_id: str, payload: dict) -> dict:
     here would discard a render that is about to succeed.
     """
 
-    try:
-        return vertical_render.submit(payload)
-    except Exception as exc:
-        if not vertical_render.is_recoverable(exc):
-            raise
-        logger.warning("Render %s: %s; aguardando o resultado registrado pelo worker", render_id, exc)
-        events.record(
-            video_id, "render", "render_connection_lost",
-            "A conexão com o worker caiu; aguardando o resultado registrado por ele",
-            level="WARNING",
-            details={"render_id": render_id, "error_type": type(exc).__name__, "error_message": str(exc)[:500]},
-        )
+    last_exc: Exception | None = None
+    for _round in range(3):
         try:
-            return vertical_render.await_result(video_id, render_id)
-        except vertical_render.RenderUnavailable:
-            raise exc
+            return vertical_render.submit(payload)
+        except Exception as exc:
+            last_exc = exc
+            if not vertical_render.is_recoverable(exc):
+                raise
+            logger.warning("Render %s: %s; aguardando o resultado registrado pelo worker", render_id, exc)
+            events.record(
+                video_id, "render", "render_connection_lost",
+                "A conexão com o worker caiu; aguardando o resultado registrado por ele",
+                level="WARNING",
+                details={"render_id": render_id, "error_type": type(exc).__name__, "error_message": str(exc)[:500]},
+            )
+            try:
+                return vertical_render.await_result(video_id, render_id)
+            except vertical_render.RenderUnavailable:
+                logger.warning("Render %s perdido no worker; reenviando", render_id)
+                continue
+    raise last_exc  # type: ignore[misc]
 
 
 def _render_horizontal_cut(video: dict, chapter: dict, video_id: str, chapter_id: str, render_id: str) -> str:
@@ -804,15 +831,13 @@ def _render_final_chapters(video_id: str, chapter_ids: list[str], resume: bool) 
         details={"chapter_ids": chapter_ids, "chapter_count": len(chapter_ids)},
     )
     logger.info("Lote de renders finais INICIADO video=%s capítulos=%s", video_id, chapter_ids)
-    errors: list[str] = []
-    for chapter_id in chapter_ids:
+    def _render_final(chapter_id: str) -> None:
         chapter = video_ref.collection("chapters").document(chapter_id).get().to_dict() or {}
         raw_options = chapter.get("render_options") or {}
         raw_options["final"] = True
-        try:
-            _render_or_adopt(video_id, chapter_id, RenderRequest.model_validate(raw_options), final=True, resume=resume)
-        except Exception as exc:
-            errors.append(f"{chapter_id}: {exc}")
+        _render_or_adopt(video_id, chapter_id, RenderRequest.model_validate(raw_options), final=True, resume=resume)
+
+    errors = _run_render_batch([(chapter_id, lambda chapter_id=chapter_id: _render_final(chapter_id)) for chapter_id in chapter_ids])
     if errors:
         _set_error(video_ref, RuntimeError("; ".join(errors)))
         events.record(

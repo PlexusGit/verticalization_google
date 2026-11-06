@@ -184,11 +184,11 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         "<b>Retomável:</b> o transcode só roda se <code>gcs_high_path</code> não existe no storage ou faltam <code>gcs_audio_chunks</code>; a transcrição só roda se <code>subtitle_text</code> está vazio. Um <code>retry</code> e a retomada automática de um vídeo interrompido reaproveitam o que já foi salvo (<code>resume=True</code>): capítulos, rascunhos concluídos e renders que o worker terminou.",
         "<b>Estados:</b> cada etapa chama <code>_stage</code> (atualiza <code>status</code> e <code>updated_at</code>). Qualquer exceção cai em <code>_set_error</code>, que grava <code>ERROR</code> + mensagem.",
         "<b>Observabilidade:</b> <code>events.record</code> escreve um log JSON estruturado e, em melhor esforço, um documento em <code>events/</code> do vídeo; falha de Firestore nunca interrompe a mídia.",
-        "<b>Rascunhos em série:</b> os capítulos são renderizados um a um; falhas são acumuladas e levantadas depois do laço (um capítulo ruim não impede os demais de renderizar, mas o vídeo termina em <code>ERROR</code>)."
+        "<b>Rascunhos e finais em paralelo:</b> os capítulos renderizam ao mesmo tempo, até <code>RENDER_PARALLELISM</code> (5) — o serviço de render abre uma instância por requisição. Falhas são acumuladas e levantadas depois do lote (um capítulo ruim não impede os demais, mas o vídeo termina em <code>ERROR</code>)."
       ],
       "refs": [
         {"label": "process_video — todo o pipeline de pré-processamento", "path": "app/services/processing.py", "start": 113, "end": 349, "symbol": "def _process_video"},
-        {"label": "_stage / _set_error — transições de estado e erro", "path": "app/services/processing.py", "start": 843, "end": 859, "symbol": "def _stage"},
+        {"label": "_stage / _set_error — transições de estado e erro", "path": "app/services/processing.py", "start": 868, "end": 884, "symbol": "def _stage"},
         {"label": "events.record — log estruturado + histórico durável", "path": "app/services/events.py", "start": 31, "end": 66, "symbol": "def record"},
         {"label": "VideoStatus — estados possíveis", "path": "app/models.py", "start": 53, "end": 62, "symbol": "class VideoStatus"},
         {"label": "POST /retry — retoma a partir de ERROR/UPLOADING", "path": "app/routers/api.py", "start": 1046, "end": 1058, "symbol": "async def retry_video"},
@@ -308,7 +308,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"label": "vertical_render.submit — HTTP com retry de rede", "path": "app/services/vertical_render.py", "start": 104, "end": 140, "symbol": "def submit"},
         {"label": "worker: vertical_render — auth, validação, download, motor, upload", "path": "vertical_render_function/main.py", "start": 264, "end": 358, "symbol": "def vertical_render"},
         {"label": "worker: validate_request — contrato do payload", "path": "vertical_render_function/renderer.py", "start": 116, "end": 183, "symbol": "def validate_request"},
-        {"label": "worker: seleção do motor e fallback determinístico", "path": "vertical_render_function/main.py", "start": 316, "end": 336, "symbol": "strategy_version = FOCAL_STRATEGY_VERSION"},
+        {"label": "worker: seleção do motor e fallback determinístico", "path": "vertical_render_function/main.py", "start": 344, "end": 367, "symbol": "strategy_version = FOCAL_STRATEGY_VERSION"},
         {"label": "loop de rascunhos dentro de process_video", "path": "app/services/processing.py", "start": 331, "end": 348, "symbol": "_stage(ref, VideoStatus.RENDERING_DRAFTS)"}
       ]
     },
@@ -386,7 +386,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"label": "build_overlay_filters — legendas, logo e títulos", "path": "vertical_render_function/renderer.py", "start": 432, "end": 513, "symbol": "def build_overlay_filters"},
         {"label": "_layout_title_box — quebra e ajuste do título", "path": "vertical_render_function/renderer.py", "start": 331, "end": 367, "symbol": "def _layout_title_box"},
         {"label": "app: cues absolutos e conversão de % para pixels", "path": "app/services/processing.py", "start": 520, "end": 572, "symbol": "chapter_start = float"},
-        {"label": "app: captions só nos finais", "path": "app/services/processing.py", "start": 595, "end": 597, "symbol": "\"captions\": captions if final else []"},
+        {"label": "app: captions só nos finais", "path": "app/services/processing.py", "start": 620, "end": 623, "symbol": "\"captions\": captions if final else []"},
         {"label": "UI: simulação de legendas no editor", "path": "app/templates/video_detail.html", "start": 99, "end": 100, "symbol": "function parseCues"}
       ]
     },
@@ -448,7 +448,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
       ],
       "refs": [
         {"label": "_render_horizontal_cut — ffmpeg do corte 16:9", "path": "app/services/processing.py", "start": 415, "end": 465, "symbol": "def _render_horizontal_cut"},
-        {"label": "integração após o final vertical (estado + erro isolado)", "path": "app/services/processing.py", "start": 692, "end": 714, "symbol": "_render_horizontal_cut(video, chapter"}
+        {"label": "integração após o final vertical (estado + erro isolado)", "path": "app/services/processing.py", "start": 722, "end": 745, "symbol": "_render_horizontal_cut(video, chapter"}
       ]
     },
     {
@@ -457,13 +457,13 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
       "facts": [
         "<b>Render mais recente vence:</b> cada render tem um <code>render_id</code>. Ao terminar, o app relê o capítulo e só atualiza <code>draft/final_*</code> se o id ainda for o do capítulo; renders superados registram sua conclusão em <code>renders/</code> sem sobrescrever o que o usuário vê.",
         "<b>Falha de render:</b> grava <code>renders/{id}.error</code>; só o render mais recente marca o capítulo como <code>ERROR</code>. O erro sempre é relançado para o chamador.",
-        "<b>Retentativas de rede</b> no cliente do worker (2× com 10 s/30 s); <b>fallback de encoder</b> (NVENC → libx264) tanto no transcode quanto no v10; <b>fallback de enquadramento</b> (v10 → recorte central determinístico).",
+        "<b>Retentativas de rede:</b> o cliente só reenvia o pedido quando o worker <b>não</b> registrou o render (documento inexistente); se o worker já o tem, o app adota o resultado em vez de refazer minutos de CPU. O worker escreve <code>heartbeat_at</code> no documento do render a cada 45 s — um PROCESSING sem heartbeat há &gt;5 min é considerado perdido e reenviado. Rejeições de capacidade da plataforma (<code>429/503/500 … available instance</code>) esperam e tentam de novo por até <code>RENDER_QUEUE_WAIT_SECONDS</code>. Também: <b>fallback de encoder</b> (NVENC → libx264) tanto no transcode quanto no v10; <b>fallback de enquadramento</b> (v10 → recorte central determinístico). <b>fallback de encoder</b> (NVENC → libx264) tanto no transcode quanto no v10; <b>fallback de enquadramento</b> (v10 → recorte central determinístico).",
         "<b>Estado durável:</b> cada etapa persiste antes de avançar; <code>retry</code> e <code>retry-finals</code> retomam sem refazer o que já existe.",
         "<b>Nunca fica preso:</b> enquanto um lote roda, o app renova <code>heartbeat_at</code> a cada 30 s (<code>pipeline_lease</code>). Se a instância morrer (deploy, escala, crash), o heartbeat para; um vídeo em status de trabalho sem heartbeat há &gt;150 s é <i>stale</i>. Ao abrir ou listar o vídeo, o app o reivindica numa transação do Firestore (só um vence) e <b>retoma</b> o pipeline, no máximo 3 vezes seguidas — depois vira <code>ERROR</code> com mensagem clara.",
         "<b>Pipelines rodam em um Cloud Run Job:</b> um <i>background task</i> do serviço web morre quando o Cloud Run desliga a instância ociosa (~15 min sem requisições — mesmo com CPU sempre alocada), em um deploy ou na redução de escala; foi isso que interrompeu um vídeo quatro vezes seguidas. Por isso o pipeline de processamento e o lote de finais são despachados como execução do job <code>PIPELINE_JOB_NAME</code> (até 24 h, imune a deploy e a escala). Sem job configurado, ou se ele não puder ser iniciado, o mesmo código roda dentro do serviço e a heartbeat cobre a interrupção.",
         "<b>Vídeos simultâneos:</b> o worker de transcode aceita 1 pedido por instância; com 1 instância o segundo vídeo era abortado pelo Cloud Run (<code>500 … waiting too long for an available instance</code>). Em CPU o worker escala até 5 instâncias, e o app repete o pedido enquanto não houver instância livre (só para essa rejeição da plataforma, nunca para falhas do worker).",
         "<b>Retomada sem repetir trabalho:</b> capítulos já salvos não são sugeridos de novo, rascunhos/finais concluídos são mantidos e renders que o worker terminou (ou ainda executa) são <i>adotados</i> a partir do registro que ele grava em <code>videos/{id}/renders/{render_id}</code> (inclui o <code>result</code> completo). Só o que nunca foi despachado é renderizado. O botão <b>Tentar novamente</b> usa o mesmo caminho.",
-        "<b>Erro de gateway não derruba o render:</b> 502/503/504 ou conexão caída dizem pouco sobre o worker, que continua renderizando. O app aguarda o resultado registrado pelo worker (limitado pelos 3600 s do pedido) em vez de marcar o capítulo como <code>ERROR</code>; só falha se o worker nunca registrou o render ou registrou um erro.",
+        "<b>Erro de gateway não derruba o render:</b> 502/503/504 ou conexão caída dizem pouco sobre o worker, que continua renderizando. O app <b>adota</b> o resultado registrado pelo worker em vez de reenviar cegamente — só reenvia quando o documento do render mostra que o trabalho foi perdido (nunca registrado, erro gravado ou heartbeat parado), e só marca o capítulo como <code>ERROR</code> após 3 rodadas sem resultado.",
         "<b>Botões não repetíveis:</b> a interface desabilita ações assíncronas (render, salvar, adicionar) até a resposta — a trava do servidor (<code>approved_at</code>) é a segunda linha de defesa.",
         "<b>Segurança:</b> workers com <code>X-API-Key</code> e comparação em tempo constante, falha fechada sem segredo; caminhos de GCS validados (sem <code>..</code>, <code>gs://</code> ou <code>/</code>); ffmpeg sempre por lista de argumentos, nunca shell."
       ],
@@ -477,14 +477,16 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"label": "lease: claim_resume — reivindicação atômica (transação)", "path": "app/services/lease.py", "start": 134, "end": 154, "symbol": "def claim_resume"},
         {"label": "api: _resume_if_stale — retoma ao abrir/listar o vídeo", "path": "app/routers/api.py", "start": 582, "end": 611, "symbol": "def _resume_if_stale"},
         {"label": "app: _render_or_adopt — mantém, adota ou despacha", "path": "app/services/processing.py", "start": 359, "end": 386, "symbol": "def _render_or_adopt"},
-        {"label": "app: _submit_or_adopt — erro de gateway adota o resultado do worker", "path": "app/services/processing.py", "start": 389, "end": 412, "symbol": "def _submit_or_adopt"},
-        {"label": "app: await_result — espera o resultado registrado pelo worker", "path": "app/services/vertical_render.py", "start": 67, "end": 101, "symbol": "def await_result"},
-        {"label": "guarda do render mais recente (sucesso)", "path": "app/services/processing.py", "start": 671, "end": 691, "symbol": "fresh = chapter_ref.get().to_dict()"},
+        {"label": "app: _submit_or_adopt — adota o resultado ou reenvia se perdido", "path": "app/services/processing.py", "start": 411, "end": 435, "symbol": "def _submit_or_adopt"},
+        {"label": "app: _run_render_batch — capítulos renderizados em paralelo", "path": "app/services/processing.py", "start": 389, "end": 409, "symbol": "def _run_render_batch"},
+        {"label": "worker: _heartbeat_loop — ping no documento do render", "path": "vertical_render_function/main.py", "start": 111, "end": 130, "symbol": "def _heartbeat_loop"},
+        {"label": "app: await_result — espera o resultado e detecta render perdido", "path": "app/services/vertical_render.py", "start": 86, "end": 126, "symbol": "def await_result"},
+        {"label": "guarda do render mais recente (sucesso)", "path": "app/services/processing.py", "start": 701, "end": 721, "symbol": "fresh = chapter_ref.get().to_dict()"},
         {"label": "tratamento de falha e relançamento", "path": "app/services/processing.py", "start": 712, "end": 751, "symbol": "except Exception as exc"},
         {"label": "fallback NVENC → libx264 no transcode", "path": "transcode_function/processor.py", "start": 519, "end": 532, "symbol": "encoder_used"},
         {"label": "fallback de encoder no v10", "path": "vertical_render_function/autoframe_v10/render.py", "start": 224, "end": 247, "symbol": "attempts = "},
-        {"label": "fallback v10 → recorte central determinístico", "path": "vertical_render_function/main.py", "start": 331, "end": 336, "symbol": "recorte central determin"},
-        {"label": "autenticação dos workers (falha fechada)", "path": "vertical_render_function/main.py", "start": 107, "end": 110, "symbol": "def _authorized"}
+        {"label": "fallback v10 → recorte central determinístico", "path": "vertical_render_function/main.py", "start": 357, "end": 364, "symbol": "recorte central determin"},
+        {"label": "autenticação dos workers (falha fechada)", "path": "vertical_render_function/main.py", "start": 133, "end": 136, "symbol": "def _authorized"}
       ]
     },
     {

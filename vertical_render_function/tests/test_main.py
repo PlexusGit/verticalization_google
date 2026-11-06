@@ -147,3 +147,68 @@ def test_gcs_uri_and_default_bucket_parsing(monkeypatch):
     assert main.split_gcs_path("gs://bucket/folder/item.mp4") == ("bucket", "folder/item.mp4")
     monkeypatch.setattr(main, "DEFAULT_BUCKET", "default")
     assert main.split_gcs_path("folder/item.mp4") == ("default", "folder/item.mp4")
+
+
+def test_heartbeat_loop_updates_only_the_render_heartbeat(monkeypatch):
+    writes = []
+
+    class Doc:
+        def __init__(self, path):
+            self.path = path
+
+        def collection(self, name):
+            return Doc(self.path + "/" + name)
+
+        def document(self, name):
+            return Doc(self.path + "/" + name)
+
+        def set(self, data, merge=False):
+            writes.append((self.path, data, merge))
+
+    db = Mock()
+    db.collection.side_effect = lambda name: Doc(name)
+    monkeypatch.setattr(main, "firestore_client", lambda: db)
+
+    stop = Mock()
+    stop.wait.side_effect = [False, True]
+    main._heartbeat_loop("v1", "r1", stop)
+
+    assert len(writes) == 1
+    path, data, merge = writes[0]
+    assert path.endswith("/renders/r1") and merge is True
+    assert "heartbeat_at" in data and "status" not in data
+
+
+def test_render_starts_and_stops_the_heartbeat(app, monkeypatch):
+    monkeypatch.setattr(main, "API_KEY", "key")
+    stops = []
+    started = []
+
+    class FakeStop:
+        def set(self):
+            stops.append(True)
+
+    monkeypatch.setattr(main.threading, "Event", lambda: FakeStop())
+
+    class FakeThread:
+        def __init__(self, target, args, daemon):
+            started.append((target, args, daemon))
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(main.threading, "Thread", lambda **kw: FakeThread(**kw))
+    monkeypatch.setattr(main, "update_status", lambda *a, **k: None)
+    monkeypatch.setattr(main, "_download", lambda path, dest: "1")
+    monkeypatch.setattr(main, "_upload", lambda path, src: "gs://b/out.mp4")
+    monkeypatch.setattr(main, "render", lambda *a, **k: None)
+
+    body = valid_payload()
+    body["mode"] = "split_stack"
+    body["keyframes_top"] = [{"time": 0, "x": 0, "y": 0}]
+    body["keyframes_bottom"] = [{"time": 0, "x": 0, "y": 540}]
+    response, status, _headers = invoke(app, json=body, headers={"X-API-Key": "key"})
+    assert status == 200
+    (target, args, daemon) = started[0]
+    assert target == main._heartbeat_loop and args[0] == "video_1" and args[1] == "render_1" and daemon
+    assert stops == [True]

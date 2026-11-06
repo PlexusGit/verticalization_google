@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     # instance (videos added at the same time queue behind each other).
     TRANSCODE_QUEUE_WAIT_SECONDS: int = 1800
 
+    # Chapter renders run in parallel up to this many workers (the render
+    # service scales to that many instances with concurrency=1).
+    RENDER_PARALLELISM: int = 5
+    # How long a render request keeps retrying while the render service has no
+    # free instance (a burst of parallel renders queues behind cold starts).
+    RENDER_QUEUE_WAIT_SECONDS: int = 1800
+
     # Cloud Run Job that runs long pipelines (survives idle shutdown and deploys
     # of the web service). Empty = run them inside the web process.
     PIPELINE_JOB_NAME: str = ""

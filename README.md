@@ -379,6 +379,7 @@ Entradas são validadas, nomes são saneados e FFmpeg é executado com array de 
 - Cloud Run GPU depende de disponibilidade/quota regional; CPU é funcional, porém mais lenta.
 - Os pipelines longos (processamento e lote de finais) rodam em um **Cloud Run Job** (`PIPELINE_JOB_NAME`, criado por `./deploy.sh`), que não sofre o desligamento por ociosidade nem os deploys do serviço web. Se o job não estiver configurado (execução local) ou não puder ser iniciado, o mesmo código roda dentro do serviço. Previews de um único capítulo continuam em segundo plano no serviço.
 - Um heartbeat (`heartbeat_at`, a cada 30 s) permite detectar execuções interrompidas: ao abrir ou listar um vídeo sem heartbeat há mais de 150 s, o app o retoma de forma atômica (no máximo 3 vezes seguidas; depois `ERROR`), reaproveitando capítulos, transcrição e renders que os workers já concluíram.
+- Os capítulos renderizam em paralelo (`RENDER_PARALLELISM`, padrão 5 — uma instância por pedido no serviço de render). Se a conexão com o worker cai, o app adota o resultado que ele registra no Firestore em vez de reenviar cegamente; o worker marca `heartbeat_at` no render e um heartbeat parado há mais de 300 s indica render perdido (reenviado automaticamente).
 - O transcode escala até `TRANSCODE_MAX_INSTANCES` (padrão 5 em CPU, 1 com GPU) e o app repete o pedido por até `TRANSCODE_QUEUE_WAIT_SECONDS` quando o Cloud Run informa que não há instância livre.
 - Revise permissões IAM para políticas organizacionais específicas antes de produção.
 

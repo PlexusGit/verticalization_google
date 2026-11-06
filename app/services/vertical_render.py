@@ -26,6 +26,12 @@ _RETRY_DELAYS = [10, 30]
 GATEWAY_STATUS_CODES = {502, 503, 504}
 # A worker request cannot outlive the Cloud Run request timeout (3600 s).
 WORKER_MAX_RENDER_SECONDS = 3600 + 120
+# The worker heartbeats its render document while it works; a PROCESSING
+# render whose heartbeat stopped is lost (the instance died) and is safe to
+# resubmit.
+WORKER_HEARTBEAT_STALE_SECONDS = 300
+INITIAL_WAIT_SECONDS = 15
+MAX_WAIT_STEP_SECONDS = 60
 _sleep = time.sleep
 
 
@@ -46,6 +52,19 @@ def is_recoverable(exc: Exception) -> bool:
     """Connection-level failures after which the worker may still finish the render."""
 
     return is_gateway_error(exc) or isinstance(exc, _TRANSIENT_NETWORK_ERRORS)
+
+
+def is_capacity_rejection(response: requests.Response) -> bool:
+    """True when Cloud Run refused the request because no instance was free.
+
+    These responses come from the platform, not the worker: the request never
+    started, so sending it again is safe. A genuine worker failure is a JSON
+    error and is never retried here.
+    """
+
+    if response.status_code in (429, 503):
+        return True
+    return response.status_code == 500 and "available instance" in (response.text or "")
 
 
 def _render_doc(video_id: str, render_id: str):
@@ -90,6 +109,12 @@ def await_result(
         if status == "ERROR":
             raise RenderFailed(str(data.get("error") or "o worker registrou uma falha"))
         if status == "PROCESSING":
+            heartbeat = data.get("heartbeat_at")
+            if isinstance(heartbeat, datetime.datetime):
+                heartbeat = heartbeat if heartbeat.tzinfo else heartbeat.replace(tzinfo=datetime.timezone.utc)
+                beat_age = (datetime.datetime.now(datetime.timezone.utc) - heartbeat).total_seconds()
+                if beat_age > WORKER_HEARTBEAT_STALE_SECONDS:
+                    raise RenderUnavailable(f"o worker parou de reportar o render há {int(beat_age)} s")
             started = data.get("started_at")
             if isinstance(started, datetime.datetime):
                 started = started if started.tzinfo else started.replace(tzinfo=datetime.timezone.utc)
@@ -115,26 +140,43 @@ def submit(payload: dict) -> dict:
     url = settings.VERTICAL_RENDER_URL.rstrip("/") + "/"
     headers = {"X-API-Key": settings.SECURITY_TOKEN}
     logger.info("Enviando render ao worker %s (render_id=%s, capítulo=%s)", url, payload.get("render_id"), payload.get("chapter_id"))
-    last_exc: Exception | None = None
-    for attempt in range(_MAX_RETRIES + 1):
+    started = time.monotonic()
+    wait = INITIAL_WAIT_SECONDS
+    attempt = 0
+    while True:
         try:
             response = requests.post(url, json=payload, headers=headers, timeout=3600)
+            if is_capacity_rejection(response) and time.monotonic() - started + wait <= settings.RENDER_QUEUE_WAIT_SECONDS:
+                logger.warning(
+                    "Render worker sem instância livre para %s (HTTP %s); nova tentativa em %ds",
+                    payload.get("render_id"), response.status_code, wait,
+                )
+                _sleep(wait)
+                wait = min(wait * 2, MAX_WAIT_STEP_SECONDS)
+                continue  # capacity waits are not render attempts
             response.raise_for_status()
             return response.json()
         except _TRANSIENT_NETWORK_ERRORS as exc:
-            last_exc = exc
-            if attempt < _MAX_RETRIES:
-                delay = _RETRY_DELAYS[attempt]
-                logger.warning(
-                    "Render worker connection failed (attempt %d/%d): %s; retrying in %ds",
-                    attempt + 1,
-                    _MAX_RETRIES + 1,
-                    exc,
-                    delay,
-                )
-                time.sleep(delay)
-                continue
-            raise
+            # A dropped connection says nothing about the render: the worker
+            # may already hold it. Resubmit only when it never received the
+            # request — otherwise let the caller adopt the recorded result.
+            try:
+                state = worker_state(payload.get("video_id"), payload.get("render_id"))
+            except Exception:
+                state = "MISSING"  # cannot check — fall back to a safe resubmit
+            if state != "MISSING":
+                raise
+            if attempt >= _MAX_RETRIES:
+                raise
+            delay = _RETRY_DELAYS[attempt]
+            logger.warning(
+                "Render worker connection failed (attempt %d/%d): %s; retrying in %ds",
+                attempt + 1,
+                _MAX_RETRIES + 1,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
+            attempt += 1
         except requests.HTTPError:
             raise
-    raise last_exc  # type: ignore[misc]
