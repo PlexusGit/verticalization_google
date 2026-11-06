@@ -124,10 +124,14 @@ def decide_claim(data: dict, video_id: str, now: datetime.datetime | None = None
             "lease_owner": firestore.DELETE_FIELD,
             "updated_at": firestore.SERVER_TIMESTAMP,
         }
+    # The error left by the interrupted run no longer applies; a new failure
+    # will write a fresh one.
     return "resume", {
         "resume_count": resumes + 1,
         "lease_owner": INSTANCE_ID,
         "heartbeat_at": firestore.SERVER_TIMESTAMP,
+        "error": firestore.DELETE_FIELD,
+        "error_type": firestore.DELETE_FIELD,
     }
 
 

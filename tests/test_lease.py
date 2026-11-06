@@ -51,6 +51,7 @@ def test_decide_claim_resumes_gives_up_or_skips():
     action, fields = lease.decide_claim(stale, "v1", NOW)
     assert action == "resume"
     assert fields["resume_count"] == 1 and fields["lease_owner"] == lease.INSTANCE_ID
+    assert fields["error"] is firestore.DELETE_FIELD and fields["error_type"] is firestore.DELETE_FIELD
 
     action, fields = lease.decide_claim({**stale, "resume_count": lease.MAX_RESUMES}, "v1", NOW)
     assert action == "give_up"
