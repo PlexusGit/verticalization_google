@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     TRANSCRIBE_MAX_ATTEMPTS: int = 5
     TRANSCRIBE_REQUEST_TIMEOUT_SECONDS: int = 300
 
+    # How long a transcode request keeps retrying while the worker has no free
+    # instance (videos added at the same time queue behind each other).
+    TRANSCODE_QUEUE_WAIT_SECONDS: int = 1800
+
+    # Cloud Run Job that runs long pipelines (survives idle shutdown and deploys
+    # of the web service). Empty = run them inside the web process.
+    PIPELINE_JOB_NAME: str = ""
+    PIPELINE_JOB_REGION: str = "us-central1"
+
     MAX_VIDEO_DURATION_SECONDS: int = 3600
     DAILY_VIDEO_LIMIT: int = 20
     DEFAULT_CHAPTER_MIN_SECONDS: int = 15

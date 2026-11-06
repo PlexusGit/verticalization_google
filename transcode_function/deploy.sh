@@ -53,6 +53,13 @@ else
   GPU_ARGS=(--gpu=0)
   ENV_VARS="${ENV_VARS},USE_NVENC=0"
 fi
+# One GPU instance is all the quota usually allows; CPU-only workers can scale out so
+# videos added at the same time are transcoded in parallel instead of queueing.
+if [[ "${USE_GPU}" == "1" ]]; then
+  MAX_INSTANCES="${TRANSCODE_MAX_INSTANCES:-1}"
+else
+  MAX_INSTANCES="${TRANSCODE_MAX_INSTANCES:-5}"
+fi
 SERVICE_ACCOUNT_ARGS=()
 if [[ -n "${SERVICE_ACCOUNT}" ]]; then
   SERVICE_ACCOUNT_ARGS=(--service-account="${SERVICE_ACCOUNT}")
@@ -63,7 +70,7 @@ gcloud run deploy "${SERVICE_NAME}" \
   --execution-environment=gen2 --allow-unauthenticated \
   ${SERVICE_ACCOUNT_ARGS[@]+"${SERVICE_ACCOUNT_ARGS[@]}"} ${GPU_ARGS[@]+"${GPU_ARGS[@]}"} \
   --cpu=4 --memory=16Gi --timeout=3600 --concurrency=1 \
-  --min-instances=0 --max-instances=1 --no-cpu-throttling \
+  --min-instances=0 --max-instances="${MAX_INSTANCES}" --no-cpu-throttling \
   --set-env-vars="${ENV_VARS}" \
   --set-secrets="SECURITY_TOKEN=${API_KEY_SECRET}:latest"
 

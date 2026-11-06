@@ -371,6 +371,20 @@ INITIAL_ALLOWED_EMAILS=editor1@example.com,editor2@example.com
 - **Fase:** opcionais; lidas pelo **worker de transcode**.
 - Duração de cada bloco de áudio MP3 mono 16 kHz (padrão 600 s; os tempos por palavra do Gemini têm limite de 15–30 min por requisição) e bitrate (padrão `64k`, mantém cada bloco pequeno o bastante para envio inline).
 
+### `PIPELINE_JOB_NAME` e `PIPELINE_JOB_REGION`
+
+- **Fase:** definidas automaticamente pelo `deploy.sh`.
+- Nome e região do **Cloud Run Job** que executa os pipelines longos (transcode, transcrição, capítulos, renders e lote de finais). Um *background task* do serviço web morre quando o Cloud Run desliga a instância ociosa (~15 min sem requisições), quando uma nova revisão é implantada ou quando a escala diminui; uma execução de job não sofre nenhum desses limites (até 24 h). Se a variável estiver vazia (execução local) ou o job não puder ser iniciado, o pipeline roda dentro do próprio serviço.
+- Requer `roles/run.developer` e `roles/iam.serviceAccountUser` (sobre ela mesma) para a conta de serviço — o `setup_gcp.sh` concede ambos. Em um projeto já criado:
+  `gcloud projects add-iam-policy-binding PROJECT --member=serviceAccount:SA --role=roles/run.developer` e
+  `gcloud iam service-accounts add-iam-policy-binding SA --member=serviceAccount:SA --role=roles/iam.serviceAccountUser`.
+
+### `TRANSCODE_QUEUE_WAIT_SECONDS` e `TRANSCODE_MAX_INSTANCES`
+
+- **Fase:** opcionais.
+- `TRANSCODE_MAX_INSTANCES` (lido pelo `transcode_function/deploy.sh`): máximo de instâncias do worker de transcode — padrão 1 com GPU (a cota costuma permitir uma) e 5 em CPU. Com uma só instância e `concurrency=1`, o segundo vídeo adicionado ao mesmo tempo esperava ~30 s e o Cloud Run o abortava com `500 ... waiting too long for an available instance`.
+- `TRANSCODE_QUEUE_WAIT_SECONDS` (padrão 1800): por quanto tempo o app repete o pedido quando o Cloud Run informa que não há instância livre (429/503, ou 500 com essa mensagem). Falhas reais do worker nunca são repetidas.
+
 ### `TRANSCODE_PRESET` e `TRANSCODE_CRF`
 
 - **Fase:** opcionais; lidas pelo **worker de transcode** (só o caminho CPU/x264; o NVENC mantém o próprio ajuste).

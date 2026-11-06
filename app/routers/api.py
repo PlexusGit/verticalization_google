@@ -17,7 +17,7 @@ from app.auth import get_current_user, request_is_admin, request_is_authenticate
 from app.config import settings
 from app.db import get_db
 from app.models import AllowedUserInput, ApprovalRequest, BrandingOptions, ChapterInput, ImportGCSRequest, PromptUpdate, RenderRequest, VideoStatus, VideoTemplateInput
-from app.services import events, gemini, lease, prompts, srt, storage
+from app.services import dispatch, events, gemini, lease, prompts, srt, storage
 from app.services.processing import (
     create_video_record,
     process_video,
@@ -209,7 +209,7 @@ async def upload_finalize(request: Request, background_tasks: BackgroundTasks):
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     snapshot.reference.update({"status": VideoStatus.TRANSCODING.value, "updated_at": firestore.SERVER_TIMESTAMP})
-    background_tasks.add_task(process_video, video_id)
+    dispatch.start(background_tasks, "process", video_id, process_video)
     return JSONResponse({"video_id": video_id, "status": VideoStatus.TRANSCODING.value}, status_code=202)
 
 
@@ -252,7 +252,7 @@ async def multipart_upload(
             store_uploaded_subtitles(video_id, raw.decode("utf-8-sig"))
         except (UnicodeDecodeError, ValueError) as exc:
             return JSONResponse({"error": f"SRT inválido: {exc}"}, status_code=400)
-    background_tasks.add_task(process_video, video_id)
+    dispatch.start(background_tasks, "process", video_id, process_video)
     return JSONResponse({"video_id": video_id, "status": VideoStatus.TRANSCODING.value}, status_code=202)
 
 
@@ -300,7 +300,7 @@ async def import_gcs(request: Request, background_tasks: BackgroundTasks):
             "updated_at": firestore.SERVER_TIMESTAMP,
         }
     )
-    background_tasks.add_task(process_video, video_id)
+    dispatch.start(background_tasks, "process", video_id, process_video)
     return JSONResponse({"video_id": video_id, "status": VideoStatus.TRANSCODING.value, "created": True}, status_code=202)
 
 
@@ -598,9 +598,10 @@ def _resume_if_stale(video_id: str, data: dict, background_tasks: BackgroundTask
             details={"status": data.get("status"), "resume_count": int(data.get("resume_count") or 0) + 1},
         )
         if data.get("status") == VideoStatus.RENDERING_FINALS.value:
-            background_tasks.add_task(render_final_chapters, video_id, list(data.get("approved_chapter_ids") or []), True)
+            dispatch.start(background_tasks, "finals", video_id, render_final_chapters,
+                           chapter_ids=list(data.get("approved_chapter_ids") or []), resume=True)
         else:
-            background_tasks.add_task(process_video, video_id, True)
+            dispatch.start(background_tasks, "process", video_id, process_video, resume=True)
         return True
     if action == "give_up":
         events.record(
@@ -994,7 +995,7 @@ async def approve(request: Request, video_id: str, background_tasks: BackgroundT
             "updated_at": firestore.SERVER_TIMESTAMP,
         }
     )
-    background_tasks.add_task(render_final_chapters, video_id, selected)
+    dispatch.start(background_tasks, "finals", video_id, render_final_chapters, chapter_ids=selected)
     return JSONResponse({"status": VideoStatus.RENDERING_FINALS.value}, status_code=202)
 
 
@@ -1065,7 +1066,7 @@ async def retry_video(request: Request, video_id: str, background_tasks: Backgro
     )
     # Resume, not restart: stored chapters, completed drafts and renders the
     # worker finished are reused instead of repeating minutes of CPU work.
-    background_tasks.add_task(process_video, video_id, True)
+    dispatch.start(background_tasks, "process", video_id, process_video, resume=True)
     return JSONResponse({"status": "RETRYING"}, status_code=202)
 
 
@@ -1098,7 +1099,7 @@ async def retry_final_renders(request: Request, video_id: str, background_tasks:
     snapshot.reference.update(
         {"status": VideoStatus.RENDERING_FINALS.value, "error": firestore.DELETE_FIELD, "error_type": firestore.DELETE_FIELD, "updated_at": firestore.SERVER_TIMESTAMP}
     )
-    background_tasks.add_task(render_final_chapters, video_id, failed_ids)
+    dispatch.start(background_tasks, "finals", video_id, render_final_chapters, chapter_ids=failed_ids)
     return JSONResponse({"status": VideoStatus.RENDERING_FINALS.value, "retrying": failed_ids}, status_code=202)
 
 

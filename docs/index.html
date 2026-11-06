@@ -118,7 +118,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
 <script type="application/json" id="doc-data">
 {
   "repo": "https://github.com/PlexusGit/verticalization_google",
-  "commit": "a50babb0553629b76208932298001565d51a4161",
+  "commit": "c3d67354b9a3a874e5e737441ea8d926b58eefd1",
   "branch": "main",
   "states": [
     {"id": "UPLOADING", "label": "UPLOADING", "who": "app", "stage": "intake", "text": "Registro criado; aguardando o arquivo de origem."},
@@ -221,7 +221,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         "<b>Falha sem áudio:</b> se não há fluxo de áudio extraível, o transcode falha (<code>source contains no extractable audio stream</code>)."
       ],
       "refs": [
-        {"label": "app: transcode.submit — cliente HTTP do worker", "path": "app/services/transcode.py", "start": 8, "end": 22, "symbol": "def submit"},
+        {"label": "app: transcode.submit — cliente HTTP do worker", "path": "app/services/transcode.py", "start": 30, "end": 56, "symbol": "def submit"},
         {"label": "worker: process_transcode — rota HTTP, auth e códigos de erro", "path": "transcode_function/main.py", "start": 54, "end": 102, "symbol": "def process_transcode"},
         {"label": "worker: TranscodeProcessor.process — baixar, transcodificar, fatiar áudio, subir", "path": "transcode_function/processor.py", "start": 449, "end": 577, "symbol": "def process"},
         {"label": "probe_media — duração, dimensões e codec via ffprobe", "path": "transcode_function/processor.py", "start": 146, "end": 177, "symbol": "def probe_media"},
@@ -458,12 +458,18 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         "<b>Retentativas de rede</b> no cliente do worker (2× com 10 s/30 s); <b>fallback de encoder</b> (NVENC → libx264) tanto no transcode quanto no v10; <b>fallback de enquadramento</b> (v10 → recorte central determinístico).",
         "<b>Estado durável:</b> cada etapa persiste antes de avançar; <code>retry</code> e <code>retry-finals</code> retomam sem refazer o que já existe.",
         "<b>Nunca fica preso:</b> enquanto um lote roda, o app renova <code>heartbeat_at</code> a cada 30 s (<code>pipeline_lease</code>). Se a instância morrer (deploy, escala, crash), o heartbeat para; um vídeo em status de trabalho sem heartbeat há &gt;150 s é <i>stale</i>. Ao abrir ou listar o vídeo, o app o reivindica numa transação do Firestore (só um vence) e <b>retoma</b> o pipeline, no máximo 3 vezes seguidas — depois vira <code>ERROR</code> com mensagem clara.",
+        "<b>Pipelines rodam em um Cloud Run Job:</b> um <i>background task</i> do serviço web morre quando o Cloud Run desliga a instância ociosa (~15 min sem requisições — mesmo com CPU sempre alocada), em um deploy ou na redução de escala; foi isso que interrompeu um vídeo quatro vezes seguidas. Por isso o pipeline de processamento e o lote de finais são despachados como execução do job <code>PIPELINE_JOB_NAME</code> (até 24 h, imune a deploy e a escala). Sem job configurado, ou se ele não puder ser iniciado, o mesmo código roda dentro do serviço e a heartbeat cobre a interrupção.",
+        "<b>Vídeos simultâneos:</b> o worker de transcode aceita 1 pedido por instância; com 1 instância o segundo vídeo era abortado pelo Cloud Run (<code>500 … waiting too long for an available instance</code>). Em CPU o worker escala até 5 instâncias, e o app repete o pedido enquanto não houver instância livre (só para essa rejeição da plataforma, nunca para falhas do worker).",
         "<b>Retomada sem repetir trabalho:</b> capítulos já salvos não são sugeridos de novo, rascunhos/finais concluídos são mantidos e renders que o worker terminou (ou ainda executa) são <i>adotados</i> a partir do registro que ele grava em <code>videos/{id}/renders/{render_id}</code> (inclui o <code>result</code> completo). Só o que nunca foi despachado é renderizado. O botão <b>Tentar novamente</b> usa o mesmo caminho.",
         "<b>Erro de gateway não derruba o render:</b> 502/503/504 ou conexão caída dizem pouco sobre o worker, que continua renderizando. O app aguarda o resultado registrado pelo worker (limitado pelos 3600 s do pedido) em vez de marcar o capítulo como <code>ERROR</code>; só falha se o worker nunca registrou o render ou registrou um erro.",
         "<b>Botões não repetíveis:</b> a interface desabilita ações assíncronas (render, salvar, adicionar) até a resposta — a trava do servidor (<code>approved_at</code>) é a segunda linha de defesa.",
         "<b>Segurança:</b> workers com <code>X-API-Key</code> e comparação em tempo constante, falha fechada sem segredo; caminhos de GCS validados (sem <code>..</code>, <code>gs://</code> ou <code>/</code>); ffmpeg sempre por lista de argumentos, nunca shell."
       ],
       "refs": [
+        {"label": "dispatch: start — job primeiro, serviço como reserva", "path": "app/services/dispatch.py", "start": 40, "end": 70, "symbol": "def start"},
+        {"label": "dispatch: run_job — execução do job com variáveis por execução", "path": "app/services/dispatch.py", "start": 28, "end": 37, "symbol": "def run_job"},
+        {"label": "job: main — entrada do Cloud Run Job", "path": "app/jobs/pipeline.py", "start": 22, "end": 45, "symbol": "def main"},
+        {"label": "transcode: submit — espera por instância livre", "path": "app/services/transcode.py", "start": 30, "end": 56, "symbol": "def submit"},
         {"label": "lease: pipeline_lease — heartbeat enquanto o lote roda", "path": "app/services/lease.py", "start": 76, "end": 106, "symbol": "def pipeline_lease"},
         {"label": "lease: is_stale — vídeo sem heartbeat há mais de 150 s", "path": "app/services/lease.py", "start": 58, "end": 72, "symbol": "def is_stale"},
         {"label": "lease: claim_resume — reivindicação atômica (transação)", "path": "app/services/lease.py", "start": 134, "end": 154, "symbol": "def claim_resume"},

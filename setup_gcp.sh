@@ -37,10 +37,12 @@ if ! gcloud iam service-accounts describe "${SERVICE_ACCOUNT_EMAIL}" --project "
   gcloud iam service-accounts create "${SA_NAME}" --project "${PROJECT}" --display-name "Plexus Vertical Cuts runtime"
 fi
 
-for role in roles/datastore.user roles/storage.objectAdmin roles/speech.client roles/serviceusage.serviceUsageConsumer roles/secretmanager.secretAccessor roles/run.invoker roles/pubsub.publisher roles/pubsub.subscriber roles/eventarc.eventReceiver; do
+for role in roles/datastore.user roles/storage.objectAdmin roles/speech.client roles/serviceusage.serviceUsageConsumer roles/secretmanager.secretAccessor roles/run.invoker roles/run.developer roles/pubsub.publisher roles/pubsub.subscriber roles/eventarc.eventReceiver; do
   gcloud projects add-iam-policy-binding "${PROJECT}" --member "serviceAccount:${SERVICE_ACCOUNT_EMAIL}" --role "${role}" --quiet >/dev/null
 done
 gcloud iam service-accounts add-iam-policy-binding "${SERVICE_ACCOUNT_EMAIL}" --project "${PROJECT}" --member "serviceAccount:${SERVICE_ACCOUNT_EMAIL}" --role roles/iam.serviceAccountTokenCreator --quiet >/dev/null
+# The app starts pipeline job executions that run as this same account (needs actAs on itself).
+gcloud iam service-accounts add-iam-policy-binding "${SERVICE_ACCOUNT_EMAIL}" --project "${PROJECT}" --member "serviceAccount:${SERVICE_ACCOUNT_EMAIL}" --role roles/iam.serviceAccountUser --quiet >/dev/null
 
 if ! gcloud firestore databases describe --database "${FIRESTORE_DB_NAME:-(default)}" --project "${PROJECT}" >/dev/null 2>&1; then
   gcloud firestore databases create --database "${FIRESTORE_DB_NAME:-(default)}" --location "${FIRESTORE_LOCATION:-nam5}" --type firestore-native --project "${PROJECT}"
