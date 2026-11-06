@@ -202,6 +202,8 @@ Campos principais da resposta:
 
 Faça polling a cada ~30 s até `PENDING_REVIEW` (depois do passo 1) e até `COMPLETED` (depois da aprovação). Pare também em `ERROR`.
 
+Os pipelines longos rodam em um Cloud Run Job e renovam um `heartbeat_at` a cada 30 s. Se a execução morrer, um vídeo em status de trabalho sem heartbeat há mais de 150 s é considerado interrompido: **`GET /api/video/{id}` e `GET /api/videos` o retomam automaticamente** (até 3 vezes seguidas; depois ele vai para `ERROR`). Por isso, um status como `RENDERING_DRAFTS` pode durar vários minutos por capítulo em CPU sem estar travado; continue o polling. `error`/`error_type` só aparecem com `status = ERROR`.
+
 Listagem resumida (até 100 vídeos, mais recentes primeiro; `status` opcional):
 
 ```bash
@@ -210,7 +212,7 @@ curl -sS -H "X-API-Key: $API_KEY" "$BASE_URL/api/videos?status=PENDING_REVIEW"
 
 ### Retomar após erro
 
-- `POST /api/video/{id}/retry` — retoma o pipeline reaproveitando transcode/transcrição já salvos. Só aceito em `ERROR` ou `UPLOADING` (senão `409`). Retorna `202 {"status": "RETRYING"}`.
+- `POST /api/video/{id}/retry` — retoma o pipeline (em um Cloud Run Job) reaproveitando transcode, transcrição, capítulos, rascunhos concluídos e renders que o worker já terminou; só o que falta é refeito. Limpa `error` e `error_type` anteriores. Só aceito em `ERROR` ou `UPLOADING` (senão `409`). Retorna `202 {"status": "RETRYING"}`.
 - `POST /api/video/{id}/retry-finals` — após a aprovação, re-renderiza **apenas** os finais que falharam. Só em `ERROR` (`409` caso contrário). Retorna `202 {"status": "RENDERING_FINALS", "retrying": [...]}`.
 
 ## 6. Passo 3 — Ler os capítulos
@@ -554,6 +556,7 @@ Excluir um vídeo (capítulos, renders e arquivos): `DELETE /api/video/{id}` →
 | `429 Limite diário de vídeos atingido` | Limite por dono (API key = `"api"`). Aguarde o dia seguinte (UTC) ou ajuste `DAILY_VIDEO_LIMIT`. |
 | `400 Formato não suportado` | Use uma das extensões da seção 3. |
 | Vídeo em `ERROR` | Leia `error`/`error_type` e chame `retry`; se a falha foi nos finais, `retry-finals`. |
+| `ERROR` "processamento interrompido" | O pipeline foi retomado 3 vezes seguidas sem concluir. Verifique os logs do job `PIPELINE_JOB_NAME` e do worker e chame `retry`. |
 | `ERROR` por duração | Vídeo maior que `MAX_VIDEO_DURATION_SECONDS`. |
 | `409` em `approve` | Vídeo fora de `PENDING_REVIEW` ou já aprovado. |
 | `409` em `upload/finalize` | O processamento já começou; consulte o status. |

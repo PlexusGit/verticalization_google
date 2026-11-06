@@ -144,6 +144,7 @@ gcloud billing projects describe "$GOOGLE_CLOUD_PROJECT"
 ```
 
 - O setup cria essa conta e concede as permissões usadas por Storage, Firestore, Speech, Secret Manager, Cloud Run, Pub/Sub e Eventarc.
+- Para iniciar execuções do Cloud Run Job de pipeline, a conta precisa de `roles/run.developer` no projeto e de `roles/iam.serviceAccountUser` sobre ela mesma (o job roda com a mesma identidade). `setup_gcp.sh` concede ambos; em projetos já existentes, execute o setup de novo ou conceda manualmente.
 
 ## 3. Aplicação e workers
 

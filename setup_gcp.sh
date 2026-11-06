@@ -98,5 +98,5 @@ gcloud storage buckets update "gs://${BUCKET_NAME}" --cors-file "${CORS_FILE}" -
 
 GOOGLE_CLOUD_PROJECT="${PROJECT}" python3 "${ROOT}/scripts/seed_allowed_emails.py"
 echo "Configuração GCP concluída."
-echo "Ações manuais: crie o cliente OAuth Web/consentimento, autorize localhost e a futura URL Cloud Run, e confirme quota NVIDIA L4 se TRANSCODE_USE_GPU=1."
+echo "Ações manuais: crie o cliente OAuth Web/consentimento, autorize localhost e a futura URL Cloud Run, e, se TRANSCODE_USE_GPU=1, confirme que a quota run.googleapis.com/nvidia_l4_gpu_allocation_no_zonal_redundancy da região foi concedida (um pedido negado deixa o deploy falhando com 'Quota exceeded for total allowable count of GPUs')."
 echo "A integração AWS → Pub/Sub também deve ser configurada no ambiente AWS quando o importador S3 for usado."

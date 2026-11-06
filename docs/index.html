@@ -82,7 +82,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
 <header>
   <h1>Plexus Vertical Cuts — processamento de vídeo<small id="refline"></small></h1>
   <div class="ctl">
-    <input id="q" type="search" placeholder="Buscar (ex.: Chirp, ffmpeg, fingerprint)…" aria-label="Buscar">
+    <input id="q" type="search" placeholder="Buscar (ex.: job, heartbeat, ffmpeg, fingerprint)…" aria-label="Buscar">
     <label style="font-size:12px;color:var(--muted)">Links do GitHub
       <select id="refsel">
         <option value="commit">commit fixo (permalink)</option>
@@ -118,7 +118,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
 <script type="application/json" id="doc-data">
 {
   "repo": "https://github.com/PlexusGit/verticalization_google",
-  "commit": "c3d67354b9a3a874e5e737441ea8d926b58eefd1",
+  "commit": "9c29ef22f2c0590b99c32272471b49cfe717cbc1",
   "branch": "main",
   "states": [
     {"id": "UPLOADING", "label": "UPLOADING", "who": "app", "stage": "intake", "text": "Registro criado; aguardando o arquivo de origem."},
@@ -134,12 +134,12 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
     {
       "id": "intake", "title": "Entrada do vídeo", "status": ["UPLOADING"], "who": ["app"],
       "summary": "Três caminhos criam o mesmo registro no Firestore e disparam o mesmo pipeline: upload multipart, upload resumível direto ao GCS e importação de bucket.",
-      "io": {"in": "Arquivo de vídeo (.mp4 .mov .mkv .webm .avi .mxf), título, SRT opcional.", "out": "Documento <code>vertical_cuts_videos/{video_id}</code> e objeto <code>{video_id}/{video_id}_source.ext</code> no GCS; <code>process_video</code> agendado."},
+      "io": {"in": "Arquivo de vídeo (.mp4 .mov .mkv .webm .avi .mxf), título, SRT opcional.", "out": "Documento <code>vertical_cuts_videos/{video_id}</code> e objeto <code>{video_id}/{video_id}_source.ext</code> no GCS; <code>process_video</code> despachado (job ou serviço)."},
       "facts": [
         "<b>Registro:</b> <code>create_video_record</code> grava o documento com <code>status=UPLOADING</code>. O id é aleatório (<code>v_&lt;uuid[:16]&gt;</code>) ou, em importações, determinístico: <code>v_import_&lt;sha256(source_id)[:16]&gt;</code> — repetir o mesmo <code>source_id</code> devolve o mesmo vídeo (<code>created=false</code>).",
         "<b>Autenticação:</b> sessão Google (cookie assinado) ou cabeçalho <code>X-API-Key</code> igual a <code>SECURITY_TOKEN</code>. Uploads por API key contam para o dono <code>\"api\"</code>.",
         "<b>Limite diário:</b> <code>_daily_limit_reached</code> conta os vídeos do dono criados hoje (UTC) contra <code>DAILY_VIDEO_LIMIT</code> (20) e responde <code>429</code>.",
-        "<b>Upload resumível:</b> <code>/api/upload/init</code> cria a sessão no GCS (origem CORS restrita) e o navegador envia os bytes direto ao bucket; <code>/api/upload/finalize</code> confere se o objeto existe, opcionalmente grava um SRT enviado, muda para <code>TRANSCODING</code> e agenda <code>process_video</code> em <code>BackgroundTasks</code>.",
+        "<b>Upload resumível:</b> <code>/api/upload/init</code> cria a sessão no GCS (origem CORS restrita) e o navegador envia os bytes direto ao bucket; <code>/api/upload/finalize</code> confere se o objeto existe, opcionalmente grava um SRT enviado, muda para <code>TRANSCODING</code> e despacha <code>process_video</code> com <code>dispatch.start</code> — uma execução do Cloud Run Job de pipeline, ou o mesmo código dentro do serviço se o job não puder ser iniciado.",
         "<b>Upload multipart:</b> <code>POST /api/videos</code> grava o corpo em arquivo temporário em blocos de 8 MiB e o envia ao GCS; recusa arquivo vazio.",
         "<b>Importação:</b> <code>POST /api/import/gcs</code> copia o objeto do bucket de origem para o caminho gerenciado (<code>storage.copy_object</code>) sem passar os bytes pelo app."
       ],
@@ -178,10 +178,10 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
     },
     {
       "id": "orchestrate", "title": "Orquestração: process_video", "status": ["TRANSCODING", "TRANSCRIBING", "SUGGESTING", "RENDERING_DRAFTS", "PENDING_REVIEW"], "who": ["app"],
-      "summary": "<code>process_video</code> é a máquina de estados do pré-processamento. Roda em segundo plano dentro do app, persiste a saída de cada etapa antes de seguir e, por isso, pode ser retomada.",
+      "summary": "<code>process_video</code> é a máquina de estados do pré-processamento. Roda como execução de um Cloud Run Job (com o mesmo código dentro do app como reserva), persiste a saída de cada etapa antes de seguir e, por isso, pode ser retomada.",
       "io": {"in": "<code>video_id</code> com <code>gcs_source_path</code>.", "out": "Capítulos com rascunhos prontos e <code>status=PENDING_REVIEW</code> — ou <code>ERROR</code> com <code>error</code>/<code>error_type</code>."},
       "facts": [
-        "<b>Retomável:</b> o transcode só roda se <code>gcs_high_path</code> não existe no storage ou faltam <code>gcs_audio_chunks</code>; a transcrição só roda se <code>subtitle_text</code> está vazio. Um <code>retry</code> reaproveita o que já foi salvo.",
+        "<b>Retomável:</b> o transcode só roda se <code>gcs_high_path</code> não existe no storage ou faltam <code>gcs_audio_chunks</code>; a transcrição só roda se <code>subtitle_text</code> está vazio. Um <code>retry</code> e a retomada automática de um vídeo interrompido reaproveitam o que já foi salvo (<code>resume=True</code>): capítulos, rascunhos concluídos e renders que o worker terminou.",
         "<b>Estados:</b> cada etapa chama <code>_stage</code> (atualiza <code>status</code> e <code>updated_at</code>). Qualquer exceção cai em <code>_set_error</code>, que grava <code>ERROR</code> + mensagem.",
         "<b>Observabilidade:</b> <code>events.record</code> escreve um log JSON estruturado e, em melhor esforço, um documento em <code>events/</code> do vídeo; falha de Firestore nunca interrompe a mídia.",
         "<b>Rascunhos em série:</b> os capítulos são renderizados um a um; falhas são acumuladas e levantadas depois do laço (um capítulo ruim não impede os demais de renderizar, mas o vídeo termina em <code>ERROR</code>)."
@@ -191,7 +191,8 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"label": "_stage / _set_error — transições de estado e erro", "path": "app/services/processing.py", "start": 843, "end": 859, "symbol": "def _stage"},
         {"label": "events.record — log estruturado + histórico durável", "path": "app/services/events.py", "start": 31, "end": 66, "symbol": "def record"},
         {"label": "VideoStatus — estados possíveis", "path": "app/models.py", "start": 53, "end": 62, "symbol": "class VideoStatus"},
-        {"label": "POST /retry — retoma a partir de ERROR/UPLOADING", "path": "app/routers/api.py", "start": 1046, "end": 1058, "symbol": "async def retry_video"}
+        {"label": "POST /retry — retoma a partir de ERROR/UPLOADING", "path": "app/routers/api.py", "start": 1046, "end": 1058, "symbol": "async def retry_video"},
+        {"label": "_resume_if_stale — retomada automática ao abrir/listar o vídeo", "path": "app/routers/api.py", "start": 582, "end": 612, "symbol": "def _resume_if_stale"}
       ]
     },
     {
@@ -218,6 +219,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         "<b>Por que o limite de keyframes:</b> o corte dos capítulos e a análise de frames buscam a partir do keyframe anterior; um arquivo remuxado mantém o layout original de keyframes, então só vídeos com keyframes razoavelmente próximos (≤15 s) podem pular o re-encode.",
         "<b>Rotação é excluída do remux:</b> o re-encode aplica a rotação nos pixels; copiar o stream manteria a tag e confundiria a análise de frames.",
         "<b>Reuso no retry:</b> blocos de áudio gravados como FLAC por versões anteriores não são reaproveitados quando ainda falta transcrever (poderiam exceder o limite de envio inline); o transcode refaz o áudio em MP3. Com legendas já salvas, nada é refeito.",
+        "<b>Capacidade do worker:</b> o transcode escala até <code>TRANSCODE_MAX_INSTANCES</code> (padrão 5 em CPU, 1 com GPU) com <code>concurrency=1</code>. Quando o Cloud Run informa que não há instância livre (429/503, ou 500 \"waiting too long for an available instance\"), o app repete o pedido por até <code>TRANSCODE_QUEUE_WAIT_SECONDS</code> (1800 s); falhas reais do worker nunca são repetidas.",
         "<b>Falha sem áudio:</b> se não há fluxo de áudio extraível, o transcode falha (<code>source contains no extractable audio stream</code>)."
       ],
       "refs": [

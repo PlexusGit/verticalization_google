@@ -45,6 +45,11 @@ Os caminhos no Firestore são `COLLECTION_VIDEOS/{video_id}/renders/{render_id}`
 e, quando fornecido, `COLLECTION_VIDEOS/{video_id}/chapters/{chapter_id}`. Os
 status são `PROCESSING`, `COMPLETED` e `ERROR`.
 
+Ao terminar, o worker grava o `result` completo apenas no documento do render
+(não no capítulo). Se a resposta HTTP se perder (502/503/504, conexão
+interrompida), o app lê esse registro e adota o resultado em vez de refazer ou
+falhar o render; é esse registro que permite retomar um pipeline interrompido.
+
 ## Teste local e implantação
 
 ```bash
