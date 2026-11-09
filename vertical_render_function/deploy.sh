@@ -18,12 +18,12 @@ if [[ -f "${ENV_FILE}" ]]; then
 fi
 
 PROJECT_ID="${GOOGLE_CLOUD_PROJECT:?GOOGLE_CLOUD_PROJECT must be set in ../.env}"
-REGION="${VERTICAL_RENDER_REGION:-${DEPLOY_REGION:-southamerica-east1}}"
-SERVICE="${VERTICAL_RENDER_SERVICE_NAME:-gni-vertical-render}"
+REGION="${VERTICAL_RENDER_REGION:-${DEPLOY_REGION:-us-central1}}"
+SERVICE="${VERTICAL_RENDER_SERVICE_NAME:-plexus-vertical-cuts-render}"
 REPOSITORY="${ARTIFACT_REGISTRY_REPOSITORY:-plexus-vertical-cuts}"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE}:${IMAGE_TAG:-latest}"
 BUCKET="${BUCKET_NAME:?BUCKET_NAME must be set in ../.env}"
-COLLECTION="${COLLECTION_VIDEOS:-gni_videos}"
+COLLECTION="${COLLECTION_VIDEOS:-vertical_cuts_videos}"
 API_KEY_SECRET="${SECURITY_TOKEN_SECRET:-plexus-vertical-cuts-api-token}"
 SERVICE_ACCOUNT="${VERTICAL_RENDER_SERVICE_ACCOUNT:-${SERVICE_ACCOUNT_EMAIL:-}}"
 USE_GPU="${TRANSCODE_USE_GPU:-0}"
@@ -41,7 +41,7 @@ fi
 printf 'Deploying %s\nImage: %s\nAutoframe engine: %s (GPU=%s)\n' "${SERVICE}" "${IMAGE}" "${AUTOFRAME_ENGINE}" "${USE_GPU}"
 gcloud config set project "${PROJECT_ID}"
 if ! gcloud artifacts repositories describe "${REPOSITORY}" --location "${REGION}" >/dev/null 2>&1; then
-  gcloud artifacts repositories create "${REPOSITORY}" --repository-format=docker --location="${REGION}" --description="GNI render workers"
+  gcloud artifacts repositories create "${REPOSITORY}" --repository-format=docker --location="${REGION}" --description="Plexus Vertical Cuts render workers"
 fi
 gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
 docker build --platform linux/amd64 ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"} -t "${IMAGE}" "${SCRIPT_DIR}"
