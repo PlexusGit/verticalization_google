@@ -134,6 +134,7 @@ def _run_writer(path, w, h, fps, cfg: Config, plan_doc, *, start, duration,
         err_handles.append(err)
         dbg_err = None
         if cfg.debug and analysis:
+            W, H = plan_doc["width"], plan_doc["height"]
             dbg_path = cfg.work / f"{cfg.tag}_debug.mp4"
             dbg_h = H * 2
             out_small_w = int(w * dbg_h / h)
@@ -191,6 +192,11 @@ def _run_writer(path, w, h, fps, cfg: Config, plan_doc, *, start, duration,
             raise RuntimeError("nenhum frame foi composto")
         return frames_written
     finally:
+        # A failure before the frame loop must not leave ffmpeg blocked on its stdin pipe.
+        for proc in (writer, dbg_writer):
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+                proc.wait()
         for err in err_handles:
             try:
                 err.close()

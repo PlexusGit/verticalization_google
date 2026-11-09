@@ -294,6 +294,55 @@ def test_render_plan_applies_overlay_builder(tmp_path):
     assert _probe(out, "-select_streams", "v", "-show_entries", "stream=width") == "1080"
 
 
+def test_render_plan_debug_writes_side_by_side_video(tmp_path):
+    src = _write_source(tmp_path)
+    cfg = make_cfg(tmp_path, video=str(src), debug=True)
+    n = 10
+    frames = [{"layout": "single", "crop": [40, 20, 90, 160], "track": 0, "mode": "static", "scene": 0}
+              for _ in range(n)]
+    plan = {"fps": 10, "width": 320, "height": 180, "start_frame": 0, "end_frame": n,
+            "frames": frames, "segments": []}
+    track = {"id": 0, "scene": 0, "frames": list(range(n)), "boxes": [[40, 20, 130, 180]] * n,
+             "speak": [0.9] * n, "asd_logit": [1.0] * n, "visual": [0.8] * n}
+    analysis = {"fps": 10, "vad": [1] * n, "tracks": [track]}
+    out = tmp_path / "dbg_out.mp4"
+    stats = render_plan(cfg, plan, str(out), analysis=analysis)
+    assert stats["frames"] == n
+    debug_video = cfg.work / f"{cfg.tag}_debug.mp4"
+    assert debug_video.exists() and debug_video.stat().st_size > 0
+    width, height = _probe(debug_video, "-select_streams", "v", "-show_entries", "stream=width,height").split(",")
+    assert int(height) == 360 and int(width) > 640
+
+
+def test_render_plan_failure_before_frames_does_not_leak_ffmpeg(tmp_path, monkeypatch):
+    from autoframe_v10 import render as v10render
+
+    src = _write_source(tmp_path, seconds=1)
+    cfg = make_cfg(tmp_path, video=str(src))
+    procs = []
+    real = v10render.ffmpeg_writer
+
+    def tracking_writer(*args, **kwargs):
+        proc, err = real(*args, **kwargs)
+        procs.append(proc)
+        return proc, err
+
+    class Boom(RuntimeError):
+        pass
+
+    def failing_capture(*args, **kwargs):
+        raise Boom("capture failed")
+
+    monkeypatch.setattr(v10render, "ffmpeg_writer", tracking_writer)
+    monkeypatch.setattr(v10render.cv2, "VideoCapture", failing_capture)
+    plan = {"fps": 10, "width": 320, "height": 180, "start_frame": 0, "end_frame": 5,
+            "frames": [{"layout": "single", "crop": [0, 0, 90, 160], "track": 0, "mode": "static", "scene": 0}] * 5,
+            "segments": []}
+    with pytest.raises(Boom):
+        render_plan(cfg, plan, str(tmp_path / "x.mp4"))
+    assert procs and all(p.poll() is not None for p in procs)
+
+
 def test_render_plan_encoder_fallback(tmp_path, monkeypatch):
     src = _write_source(tmp_path, seconds=1)
     cfg = make_cfg(tmp_path, video=str(src), encoder="h264_nvenc")  # unavailable on this machine
