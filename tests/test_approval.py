@@ -337,3 +337,86 @@ def test_retry_video_rejects_non_error_status(monkeypatch):
 
     response = client.post("/api/video/v_test/retry")
     assert response.status_code == 409
+
+
+class _Node:
+    """Minimal Firestore stand-in recording every delete by path."""
+
+    deleted: list[str] = []
+
+    def __init__(self, path, data=None, children=None):
+        self.path, self.data, self.children = path, data or {}, children or {}
+        self.reference = self
+        self.exists = True
+
+    id = property(lambda self: self.path.rsplit("/", 1)[-1])
+
+    def to_dict(self):
+        return dict(self.data)
+
+    def collection(self, name):
+        return _Collection(f"{self.path}/{name}", self.children.get(name, []))
+
+    def delete(self):
+        _Node.deleted.append(self.path)
+
+
+class _Collection:
+    def __init__(self, path, nodes):
+        self.path, self.nodes = path, nodes
+
+    def stream(self):
+        return iter(self.nodes)
+
+
+def _video_tree(status):
+    chapter = _Node("v/chapters/c1", children={"renders": [_Node("v/chapters/c1/renders/r1")]})
+    return _Node(
+        "v", {"status": status},
+        children={
+            "chapters": [chapter],
+            "renders": [_Node("v/renders/worker1"), _Node("v/renders/worker2")],
+            "events": [_Node("v/events/e1")],
+        },
+    )
+
+
+def _delete(monkeypatch, status, **data):
+    video = _video_tree(status)
+    video.data.update(data)
+    _Node.deleted = []
+    prefixes = []
+    monkeypatch.setattr(api, "_video_snapshot", lambda _id: video)
+    monkeypatch.setattr(api.storage, "delete_prefix", prefixes.append)
+    response = client.delete("/api/video/v", headers={"X-API-Key": api.settings.SECURITY_TOKEN})
+    return response, prefixes
+
+
+def test_delete_video_removes_every_subcollection_and_the_files(monkeypatch):
+    monkeypatch.setattr(api.settings, "SECURITY_TOKEN", "test-token")
+    response, prefixes = _delete(monkeypatch, VideoStatus.COMPLETED.value)
+
+    assert response.status_code == 200
+    assert set(_Node.deleted) == {
+        "v/chapters/c1/renders/r1", "v/chapters/c1",
+        "v/renders/worker1", "v/renders/worker2", "v/events/e1", "v",
+    }
+    assert _Node.deleted[-1] == "v"
+    assert prefixes == ["v/"]
+
+
+def test_delete_video_is_refused_while_a_pipeline_is_running(monkeypatch):
+    monkeypatch.setattr(api.settings, "SECURITY_TOKEN", "test-token")
+    monkeypatch.setattr(api.lease, "is_stale", lambda *_a, **_k: False)
+    response, prefixes = _delete(monkeypatch, VideoStatus.RENDERING_FINALS.value)
+
+    assert response.status_code == 409
+    assert _Node.deleted == [] and prefixes == []
+
+
+def test_delete_video_is_allowed_for_a_stalled_pipeline(monkeypatch):
+    monkeypatch.setattr(api.settings, "SECURITY_TOKEN", "test-token")
+    monkeypatch.setattr(api.lease, "is_stale", lambda *_a, **_k: True)
+    response, _prefixes = _delete(monkeypatch, VideoStatus.RENDERING_DRAFTS.value)
+
+    assert response.status_code == 200 and "v" in _Node.deleted

@@ -1122,10 +1122,20 @@ async def delete_video(request: Request, video_id: str):
     snapshot = _video_snapshot(video_id)
     if not snapshot.exists:
         return JSONResponse({"error": "Vídeo não encontrado"}, status_code=404)
+    video_data = snapshot.to_dict() or {}
+    # A live pipeline keeps writing to the video's subcollections, which would
+    # recreate orphans (and fail on the missing parent). A stalled one is fine.
+    if video_data.get("status") in lease.WORKING_STATUSES and not lease.is_stale(video_data, video_id):
+        return JSONResponse({"error": "O vídeo está sendo processado; aguarde terminar antes de excluir"}, status_code=409)
     for chapter in snapshot.reference.collection("chapters").stream():
         for render in chapter.reference.collection("renders").stream():
             render.reference.delete()
         chapter.reference.delete()
+    # Subcollections directly under the video (render worker records, event
+    # log) are not removed with the parent document.
+    for name in ("renders", "events"):
+        for document in snapshot.reference.collection(name).stream():
+            document.reference.delete()
     storage.delete_prefix(f"{video_id}/")
     snapshot.reference.delete()
     return {"ok": True}
