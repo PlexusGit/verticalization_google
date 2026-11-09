@@ -264,3 +264,66 @@ def test_draft_render_skips_horizontal_cut(monkeypatch, chapter_ref):
     assert chapter_ref.data["draft_status"] == "COMPLETED"
     assert "horizontal_status" not in chapter_ref.data
     assert "ffmpeg" not in calls
+
+
+POINTS = [{"time": 5, "x": 900, "y": 540}]
+
+
+def _legacy_options(**over):
+    return RenderRequest(
+        automatic_focal_points=POINTS, focal_strategy_version=3, focal_points_bounds=[0, 60], **over
+    )
+
+
+def _payload_for(monkeypatch, options, uuid_hex="e1e1e1e1e1e1"):
+    payloads = []
+    monkeypatch.setattr(processing, "uuid", FakeUuidModule([uuid_hex]))
+    monkeypatch.setattr(processing.vertical_render, "submit", lambda payload: payloads.append(payload) or {"gcs_path": "o.mp4"})
+    render_chapter("v_test", "chapter_001", options, final=False)
+    return payloads[0]
+
+
+def test_legacy_focal_points_are_sent_when_bounds_are_unchanged(monkeypatch, chapter_ref):
+    assert _payload_for(monkeypatch, _legacy_options())["automatic_focal_points"] == POINTS
+
+
+def test_legacy_focal_points_are_withheld_after_a_bounds_change(monkeypatch, chapter_ref):
+    chapter_ref.data.update({"start_seconds": 10, "end_seconds": 70})
+    assert _payload_for(monkeypatch, _legacy_options())["automatic_focal_points"] == []
+
+
+def test_legacy_focal_points_are_withheld_without_recorded_bounds(monkeypatch, chapter_ref):
+    options = RenderRequest(automatic_focal_points=POINTS, focal_strategy_version=3)
+    assert _payload_for(monkeypatch, options)["automatic_focal_points"] == []
+
+
+def test_focal_points_are_withheld_for_other_strategy_versions(monkeypatch, chapter_ref):
+    options = RenderRequest(automatic_focal_points=POINTS, focal_strategy_version=10, focal_points_bounds=[0, 60])
+    assert _payload_for(monkeypatch, options)["automatic_focal_points"] == []
+
+
+def test_legacy_render_records_the_bounds_of_new_focal_points(monkeypatch, chapter_ref):
+    monkeypatch.setattr(processing, "uuid", FakeUuidModule(["f2f2f2f2f2f2"]))
+    monkeypatch.setattr(
+        processing.vertical_render, "submit",
+        lambda _payload: {"gcs_path": "o.mp4", "automatic_focal_points": POINTS, "focal_strategy_version": 3},
+    )
+
+    render_chapter("v_test", "chapter_001", RenderRequest(), final=False)
+
+    options = chapter_ref.data["render_options"]
+    assert options["automatic_focal_points"] == POINTS
+    assert options["focal_points_bounds"] == [0.0, 60.0]
+
+
+def test_v10_render_drops_focal_points_bounds(monkeypatch, chapter_ref):
+    chapter_ref.data["render_options"] = {"automatic_focal_points": POINTS, "focal_strategy_version": 3, "focal_points_bounds": [0, 60]}
+    monkeypatch.setattr(processing, "uuid", FakeUuidModule(["a3a3a3a3a3a3"]))
+    monkeypatch.setattr(
+        processing.vertical_render, "submit",
+        lambda _payload: {"gcs_path": "o.mp4", "automatic_focal_points": [], "focal_strategy_version": 10},
+    )
+
+    render_chapter("v_test", "chapter_001", RenderRequest(), final=False)
+
+    assert "focal_points_bounds" not in chapter_ref.data["render_options"]

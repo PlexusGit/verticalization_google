@@ -304,7 +304,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
       ],
       "refs": [
         {"label": "render_chapter — registro, payload, chamada ao worker e persistência", "path": "app/services/processing.py", "start": 468, "end": 780, "symbol": "def render_chapter"},
-        {"label": "montagem do payload enviado ao worker", "path": "app/services/processing.py", "start": 573, "end": 606, "symbol": "payload = {"},
+        {"label": "montagem do payload enviado ao worker", "path": "app/services/processing.py", "start": 573, "end": 619, "symbol": "payload = {"},
         {"label": "vertical_render.submit — HTTP com retry de rede", "path": "app/services/vertical_render.py", "start": 104, "end": 140, "symbol": "def submit"},
         {"label": "worker: vertical_render — auth, validação, download, motor, upload", "path": "vertical_render_function/main.py", "start": 264, "end": 358, "symbol": "def vertical_render"},
         {"label": "worker: validate_request — contrato do payload", "path": "vertical_render_function/renderer.py", "start": 116, "end": 183, "symbol": "def validate_request"},
@@ -348,7 +348,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
           {"label": "campos de configuração no fingerprint", "path": "vertical_render_function/autoframe_v10/artifacts.py", "start": 21, "end": 34, "symbol": "_FINGERPRINT_FIELDS"},
           {"label": "dumps/loads do plano (gzip) e caminho do artefato", "path": "vertical_render_function/autoframe_v10/artifacts.py", "start": 74, "end": 88, "symbol": "def dumps_plan"},
           {"label": "worker: reuso ou análise + publicação do plano", "path": "vertical_render_function/main.py", "start": 198, "end": 261, "symbol": "expected_fp = artifacts.plan_fingerprint"},
-          {"label": "app: persistência dos artefatos devolvidos pelo worker", "path": "app/services/processing.py", "start": 636, "end": 673, "symbol": "result = _submit_or_adopt"}
+          {"label": "app: persistência dos artefatos devolvidos pelo worker", "path": "app/services/processing.py", "start": 650, "end": 690, "symbol": "result = _submit_or_adopt"}
         ]}
       ],
       "io": {"in": "Fonte <code>_high.mp4</code>, <code>trim_start/end</code>, dispositivo e encoder.", "out": "MP4 1080×1920 H.264/AAC + plano gzip no GCS."},
@@ -386,7 +386,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"label": "build_overlay_filters — legendas, logo e títulos", "path": "vertical_render_function/renderer.py", "start": 432, "end": 513, "symbol": "def build_overlay_filters"},
         {"label": "_layout_title_box — quebra e ajuste do título", "path": "vertical_render_function/renderer.py", "start": 331, "end": 367, "symbol": "def _layout_title_box"},
         {"label": "app: cues absolutos e conversão de % para pixels", "path": "app/services/processing.py", "start": 520, "end": 572, "symbol": "chapter_start = float"},
-        {"label": "app: captions só nos finais", "path": "app/services/processing.py", "start": 620, "end": 623, "symbol": "\"captions\": captions if final else []"},
+        {"label": "app: captions só nos finais", "path": "app/services/processing.py", "start": 633, "end": 636, "symbol": "\"captions\": captions if final else []"},
         {"label": "UI: simulação de legendas no editor", "path": "app/templates/video_detail.html", "start": 99, "end": 100, "symbol": "function parseCues"}
       ]
     },
@@ -482,7 +482,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"label": "worker: _heartbeat_loop — ping no documento do render", "path": "vertical_render_function/main.py", "start": 111, "end": 130, "symbol": "def _heartbeat_loop"},
         {"label": "app: await_result — espera o resultado e detecta render perdido", "path": "app/services/vertical_render.py", "start": 86, "end": 126, "symbol": "def await_result"},
         {"label": "guarda do render mais recente (sucesso)", "path": "app/services/processing.py", "start": 701, "end": 721, "symbol": "fresh = chapter_ref.get().to_dict()"},
-        {"label": "tratamento de falha e relançamento", "path": "app/services/processing.py", "start": 712, "end": 751, "symbol": "except Exception as exc"},
+        {"label": "tratamento de falha e relançamento", "path": "app/services/processing.py", "start": 726, "end": 770, "symbol": "except Exception as exc"},
         {"label": "fallback NVENC → libx264 no transcode", "path": "transcode_function/processor.py", "start": 519, "end": 532, "symbol": "encoder_used"},
         {"label": "fallback de encoder no v10", "path": "vertical_render_function/autoframe_v10/render.py", "start": 224, "end": 247, "symbol": "attempts = "},
         {"label": "fallback v10 → recorte central determinístico", "path": "vertical_render_function/main.py", "start": 357, "end": 364, "symbol": "recorte central determin"},

@@ -387,6 +387,8 @@ Entradas são validadas, nomes são saneados e FFmpeg é executado com array de 
 
 > O motor padrão é o **v10** (YOLO-face, LR-ASD e plano de câmera persistido), descrito em [`autodetect.md`](autodetect.md). O texto abaixo documenta o motor legado (`AUTOFRAME_ENGINE=legacy`).
 
+No motor legado o render final reutiliza os focos (`automatic_focal_points`) do rascunho em vez de repetir a detecção, mas só enquanto os limites do capítulo continuam os mesmos (`focal_points_bounds`); ao editar o início ou o fim, a detecção é refeita.
+
 O motor legado amostra no máximo 240 frames de cada capítulo e executa o YuNet localmente, sem API de visão ou cobrança por imagem. Uma média móvel de três segundos estabiliza a posição da pessoa rastreada, uma zona morta de 20% ignora movimentos pequenos da cabeça e a histerese de 1,5 segundo evita trocas ocasionais de pessoa. Quando o rosto desaparece, o `TrackerMIL` acompanha uma região expandida de cabeça, ombros e torso, com retenção de até dez segundos se o tracker falhar e reinicialização em mudanças de cena. Os focos `(x, y)` são compactados para até 24 keyframes, persistidos no rascunho e reutilizados no render final.
 
 A implementação fica isolada em `vertical_render_function/face_detection.py`. O modelo YuNet incluído em `vertical_render_function/models/` vem do OpenCV Zoo e mantém sua licença MIT no mesmo diretório. O renderer continua responsável apenas pela interpolação e composição. Uma evolução futura pode combinar atividade labial ou diarização sem trocar o contrato de keyframes.

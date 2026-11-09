@@ -715,7 +715,7 @@ async def update_chapter(request: Request, video_id: str, chapter_id: str, backg
         stored_options = dict(previous.get("render_options") or {})
         # The editor owns framing/caption fields only; approval-owned branding
         # and worker-produced artifacts carry over from the stored options.
-        for key in ("branding", "camera_plan_gcs_path", "camera_plan_fingerprint", "focal_strategy_version", "automatic_focal_points"):
+        for key in ("branding", "camera_plan_gcs_path", "camera_plan_fingerprint", "focal_strategy_version", "automatic_focal_points", "focal_points_bounds"):
             if stored_options.get(key):
                 incoming_options[key] = stored_options[key]
         incoming_options["template_id"] = None
@@ -889,7 +889,7 @@ async def queue_render(request: Request, video_id: str, chapter_id: str, backgro
     if not options.final:
         # Approval-owned branding and worker-produced artifacts keep whatever
         # the stored options already carry.
-        for key in ("branding", "camera_plan_gcs_path", "camera_plan_fingerprint", "focal_strategy_version", "automatic_focal_points"):
+        for key in ("branding", "camera_plan_gcs_path", "camera_plan_fingerprint", "focal_strategy_version", "automatic_focal_points", "focal_points_bounds"):
             if stored_options.get(key):
                 persisted_options[key] = stored_options[key]
     # Persist the raw choice (None = auto) so the card dropdown and approval

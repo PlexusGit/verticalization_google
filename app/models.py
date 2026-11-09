@@ -136,6 +136,9 @@ class RenderRequest(BaseModel):
     keyframes_top: list[CropKeyframe] = Field(default_factory=list, max_length=200)
     keyframes_bottom: list[CropKeyframe] = Field(default_factory=list, max_length=200)
     automatic_focal_points: list[CropKeyframe] = Field(default_factory=list, max_length=241)
+    # [trim_start, trim_end] the focal points were detected for; they are only
+    # reused while the chapter still has exactly these bounds.
+    focal_points_bounds: list[float] = Field(default_factory=list, max_length=2)
     caption_style: CaptionStyle = Field(default_factory=CaptionStyle)
     branding: BrandingOptions = Field(default_factory=BrandingOptions)
     template_id: str | None = Field(default=None, max_length=200)

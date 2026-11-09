@@ -603,6 +603,17 @@ def render_chapter(
     # plans for the current engine. Anything else makes the worker re-analyze.
     stored_version = persisted_options.get("focal_strategy_version")
     reusable_plan = stored_version == settings.FOCAL_STRATEGY_VERSION
+    # Legacy focal keyframes carry no fingerprint, so they are reused only when
+    # detected for exactly these chapter bounds (a trim change makes them stale).
+    chapter_end = float(chapter["end_seconds"])
+    stored_bounds = persisted_options.get("focal_points_bounds") or []
+    reusable_points = (
+        stored_version == settings.LEGACY_FOCAL_STRATEGY_VERSION
+        and persisted_options.get("layout_mode", "center_crop") == "center_crop"
+        and len(stored_bounds) == 2
+        and abs(stored_bounds[0] - chapter_start) < 1e-3
+        and abs(stored_bounds[1] - chapter_end) < 1e-3
+    )
     payload = {
         "video_id": video_id,
         "chapter_id": chapter_id,
@@ -617,6 +628,7 @@ def render_chapter(
         "keyframes_bottom": persisted_options.get("keyframes_bottom") or [],
         "camera_plan_gcs_path": (persisted_options.get("camera_plan_gcs_path") or "") if reusable_plan else "",
         "camera_plan_fingerprint": (persisted_options.get("camera_plan_fingerprint") or "") if reusable_plan else "",
+        "automatic_focal_points": (persisted_options.get("automatic_focal_points") or []) if reusable_points else [],
         # Previews stay caption-free: the editor simulates caption timing and
         # style in the DOM overlay; only approved finals burn the subtitles in.
         "captions": captions if final else [],
@@ -675,10 +687,13 @@ def render_chapter(
         # v3 points under the v10 version would mislabel stale trajectories.
         if not detected_points and result_version == settings.LEGACY_FOCAL_STRATEGY_VERSION:
             detected_points = persisted_options.get("automatic_focal_points") or []
+        if result.get("automatic_focal_points"):
+            persisted_options["focal_points_bounds"] = [chapter_start, chapter_end]
         if detected_points:
             persisted_options["automatic_focal_points"] = detected_points
         elif result_version != settings.LEGACY_FOCAL_STRATEGY_VERSION:
             persisted_options.pop("automatic_focal_points", None)
+            persisted_options.pop("focal_points_bounds", None)
         persisted_options["focal_strategy_version"] = result_version
         persisted_options["camera_plan_gcs_path"] = result.get("camera_plan_gcs_path") or ""
         persisted_options["camera_plan_fingerprint"] = result.get("camera_plan_fingerprint") or ""
