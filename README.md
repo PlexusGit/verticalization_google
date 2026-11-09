@@ -366,7 +366,7 @@ Duas janelas de recorte são animadas de forma independente e empilhadas em 9:16
 - Queima estática via ASS/libass.
 - Fonte, tamanho, cor, contorno e posição básica.
 - Logo PNG/JPG/WebP com tamanho, opacidade e posição.
-- Texto com tamanho, cor e posição.
+- Texto com tamanho, cor e posição; os templates podem ativar uma caixa de leitura atrás do título (cor e opacidade; padrão sem caixa).
 
 Entradas são validadas, nomes são saneados e FFmpeg é executado com array de argumentos, nunca por shell.
 

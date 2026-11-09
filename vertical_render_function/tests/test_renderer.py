@@ -172,3 +172,25 @@ def test_render_uses_argument_array_and_checks_subprocess():
     assert "shell" not in run.call_args.kwargs
     assert run.call_args.kwargs["check"] is True
     assert command[-1] == "/tmp/out.mp4"
+
+
+def test_title_box_is_drawn_only_when_requested():
+    plain = renderer.validate_request(payload(text_overlays=[{"text": "Título", "x": 108, "y": 420, "size": 60}]))
+    graph, _ = renderer.build_video_filter(plain, None, None)
+    assert "box=1" not in graph and "boxcolor" not in graph
+
+    zero = renderer.validate_request(payload(text_overlays=[{"text": "Título", "x": 108, "y": 420, "size": 60, "box_opacity": 0}]))
+    assert "box=1" not in renderer.build_video_filter(zero, None, None)[0]
+
+    boxed = renderer.validate_request(payload(text_overlays=[{"text": "Título", "x": 108, "y": 420, "size": 60, "box_color": "#112233", "box_opacity": 0.55}]))
+    graph, _ = renderer.build_video_filter(boxed, None, None)
+    assert "box=1" in graph and "boxcolor=#112233@0.55" in graph and "boxborderw=15" in graph
+
+
+def test_title_box_rejects_invalid_color_and_opacity():
+    bad_color = renderer.validate_request(payload(text_overlays=[{"text": "T", "size": 40, "box_color": "red;rm", "box_opacity": 0.5}]))
+    with pytest.raises(renderer.ValidationError):
+        renderer.build_video_filter(bad_color, None, None)
+    bad_opacity = renderer.validate_request(payload(text_overlays=[{"text": "T", "size": 40, "box_opacity": "x"}]))
+    with pytest.raises(renderer.ValidationError):
+        renderer.build_video_filter(bad_opacity, None, None)

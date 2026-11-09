@@ -503,6 +503,11 @@ def build_overlay_filters(
             options.append(f"fontfile='{_escape_filter_path(font_path)}'")
         if line_spacing:
             options.append(f"line_spacing={line_spacing}")
+        box_opacity = min(1.0, _number(overlay.get("box_opacity", 0) or 0, f"text_overlays[{index}].box_opacity", 0))
+        if box_opacity > 0:
+            # Readability box behind the title; padding scales with the font.
+            box_color = _color(overlay.get("box_color"), "#000000")
+            options.extend(["box=1", f"boxcolor={box_color}@{box_opacity:g}", f"boxborderw={max(4, round(size * 0.25))}"])
         if "\n" in text:
             options.append("text_align=C")
         options.append(f"x={x}")

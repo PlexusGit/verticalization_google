@@ -188,10 +188,10 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
       ],
       "refs": [
         {"label": "process_video — todo o pipeline de pré-processamento", "path": "app/services/processing.py", "start": 113, "end": 349, "symbol": "def _process_video"},
-        {"label": "_stage / _set_error — transições de estado e erro", "path": "app/services/processing.py", "start": 868, "end": 884, "symbol": "def _stage"},
+        {"label": "_stage / _set_error — transições de estado e erro", "path": "app/services/processing.py", "start": 885, "end": 901, "symbol": "def _stage"},
         {"label": "events.record — log estruturado + histórico durável", "path": "app/services/events.py", "start": 31, "end": 66, "symbol": "def record"},
-        {"label": "VideoStatus — estados possíveis", "path": "app/models.py", "start": 53, "end": 62, "symbol": "class VideoStatus"},
-        {"label": "POST /retry — retoma a partir de ERROR/UPLOADING", "path": "app/routers/api.py", "start": 1046, "end": 1058, "symbol": "async def retry_video"},
+        {"label": "VideoStatus — estados possíveis", "path": "app/models.py", "start": 64, "end": 73, "symbol": "class VideoStatus"},
+        {"label": "POST /retry — retoma a partir de ERROR/UPLOADING", "path": "app/routers/api.py", "start": 1058, "end": 1070, "symbol": "async def retry_video"},
         {"label": "_resume_if_stale — retomada automática ao abrir/listar o vídeo", "path": "app/routers/api.py", "start": 582, "end": 612, "symbol": "def _resume_if_stale"}
       ]
     },
@@ -378,7 +378,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
       "facts": [
         "<b>Legendas:</b> o app envia cada cue em tempo <i>absoluto</i> (<code>cue.start + chapter.start</code>); o worker as converte para ASS (<code>write_ass_captions</code>) subtraindo <code>trim_start</code> e descartando as fora do trecho. Estilo: fonte, tamanho, cor/contorno (<code>#RRGGBB</code> → <code>&amp;H00BBGGRR</code>), posição top/middle/bottom (alinhamento ASS 8/5/2, margem inferior 170) e queima via filtro <code>subtitles</code> (libass).",
         "<b>Logo:</b> <code>scale=W:H</code>, <code>format=rgba</code>, <code>colorchannelmixer=aa=opacidade</code> e <code>overlay=x:y</code>; as posições em porcentagem do template viram pixels do app (1080×1920). A imagem de entrada é de um quadro só — usar <code>-loop 1</code> travaria o ffmpeg.",
-        "<b>Título:</b> <code>drawtext</code> com <code>textfile</code> (quebras de linha reais). Em caixas de template, o worker mede o texto com PIL e a fonte real, quebra linhas, reduz a fonte até caber e centraliza o bloco na caixa.",
+        "<b>Título:</b> <code>drawtext</code> com <code>textfile</code> (quebras de linha reais). Em caixas de template, o worker mede o texto com PIL e a fonte real, quebra linhas, reduz a fonte até caber e centraliza o bloco na caixa. A <b>caixa de leitura</b> atrás do título é opcional por template (<code>box_color</code> / <code>box_opacity</code>, padrão 0 = sem caixa): com opacidade acima de 0 o worker liga <code>box=1</code>, <code>boxcolor</code> e <code>boxborderw</code> no <code>drawtext</code>.",
         "<b>Rascunhos não levam legendas nem template</b>; o editor as simula no navegador, sincronizadas com o tempo do vídeo, para não duplicar legenda queimada."
       ],
       "refs": [
@@ -403,7 +403,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
       "refs": [
         {"label": "GET /api/video/{id} — vídeo, capítulos e URLs assinadas", "path": "app/routers/api.py", "start": 631, "end": 658, "symbol": "async def video_detail"},
         {"label": "PUT /chapters/{id} — salva revisão e reagenda o rascunho", "path": "app/routers/api.py", "start": 686, "end": 740, "symbol": "async def update_chapter"},
-        {"label": "_can_render_draft — condição para renderizar", "path": "app/routers/api.py", "start": 743, "end": 754, "symbol": "def _can_render_draft"},
+        {"label": "_can_render_draft — condição para renderizar", "path": "app/routers/api.py", "start": 755, "end": 766, "symbol": "def _can_render_draft"},
         {"label": "POST /chapters — adicionar capítulo", "path": "app/routers/api.py", "start": 757, "end": 793, "symbol": "async def add_chapter"},
         {"label": "POST /chapters/{id}/render — novo preview", "path": "app/routers/api.py", "start": 853, "end": 907, "symbol": "async def queue_render"},
         {"label": "UI: load() e polling da página", "path": "app/templates/video_detail.html", "start": 59, "end": 59, "symbol": "async function load"},
@@ -498,9 +498,9 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         "<b>Exclusão:</b> <code>DELETE /api/video/{id}</code> remove renders, capítulos e todo o prefixo <code>{video_id}/</code> do bucket."
       ],
       "refs": [
-        {"label": "download — redireciona para URL assinada", "path": "app/routers/api.py", "start": 1001, "end": 1011, "symbol": "async def download_render"},
+        {"label": "download — redireciona para URL assinada", "path": "app/routers/api.py", "start": 1013, "end": 1023, "symbol": "async def download_render"},
         {"label": "signed_url — URL V4 (chave local ou IAM)", "path": "app/services/storage.py", "start": 79, "end": 100, "symbol": "def signed_url"},
-        {"label": "DELETE vídeo — Firestore + storage", "path": "app/routers/api.py", "start": 1098, "end": 1111, "symbol": "async def delete_video"},
+        {"label": "DELETE vídeo — Firestore + storage", "path": "app/routers/api.py", "start": 1110, "end": 1123, "symbol": "async def delete_video"},
         {"label": "delete_prefix", "path": "app/services/storage.py", "start": 103, "end": 107, "symbol": "def delete_prefix"}
       ]
     },

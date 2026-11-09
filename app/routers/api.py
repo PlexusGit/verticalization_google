@@ -97,8 +97,8 @@ def _template_branding(template: dict, video: dict, chapter: dict) -> dict:
             "position": title_position,
             "font_size": geometry.get("font_size", 54),
             "color": "#FFFFFF",
-            "background_color": "#000000",
-            "background_opacity": 0.55,
+            "box_color": geometry.get("box_color", "#000000"),
+            "box_opacity": geometry.get("box_opacity", 0),
             "x_percent": geometry.get("x_percent", title_defaults["x_percent"]),
             "y_percent": geometry.get("y_percent", title_defaults["y_percent"]),
             "width_percent": geometry.get("width_percent", title_defaults["width_percent"]),
@@ -434,6 +434,8 @@ async def create_template(
     title_width_percent: float = Form(80),
     title_height_percent: float = Form(12),
     title_font_size: int = Form(54),
+    title_box_color: str = Form("#000000"),
+    title_box_opacity: float = Form(0),
     is_default: bool = Form(False),
     logo: UploadFile | None = File(None),
 ):
@@ -455,6 +457,8 @@ async def create_template(
                 "title_width_percent": title_width_percent,
                 "title_height_percent": title_height_percent,
                 "title_font_size": title_font_size,
+                "title_box_color": title_box_color,
+                "title_box_opacity": title_box_opacity,
             }
         )
     except ValidationError as exc:
@@ -477,6 +481,8 @@ async def create_template(
             "width_percent": payload.title_width_percent,
             "height_percent": payload.title_height_percent,
             "font_size": payload.title_font_size,
+            "box_color": payload.title_box_color,
+            "box_opacity": payload.title_box_opacity,
         },
         "is_default": bool(is_default),
         "created_by": (current_user.get("info") or {}).get("email", ""),
@@ -506,6 +512,8 @@ async def update_template(
     title_width_percent: float = Form(80),
     title_height_percent: float = Form(12),
     title_font_size: int = Form(54),
+    title_box_color: str = Form("#000000"),
+    title_box_opacity: float = Form(0),
     is_default: bool = Form(False),
     logo: UploadFile | None = File(None),
 ):
@@ -534,6 +542,8 @@ async def update_template(
                 "title_width_percent": title_width_percent,
                 "title_height_percent": title_height_percent,
                 "title_font_size": title_font_size,
+                "title_box_color": title_box_color,
+                "title_box_opacity": title_box_opacity,
             }
         )
     except ValidationError as exc:
@@ -565,6 +575,8 @@ async def update_template(
                 "width_percent": payload.title_width_percent,
                 "height_percent": payload.title_height_percent,
                 "font_size": payload.title_font_size,
+                "box_color": payload.title_box_color,
+                "box_opacity": payload.title_box_opacity,
             },
             "is_default": bool(is_default),
             "updated_at": firestore.SERVER_TIMESTAMP,

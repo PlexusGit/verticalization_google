@@ -35,6 +35,17 @@ class VideoTemplateInput(BaseModel):
     title_width_percent: float = Field(default=80, ge=5, le=100)
     title_height_percent: float = Field(default=12, ge=2, le=100)
     title_font_size: int = Field(default=54, ge=16, le=140)
+    # Opt-in readability box behind the title; 0 keeps the plain text.
+    title_box_color: str = "#000000"
+    title_box_opacity: float = Field(default=0, ge=0, le=1)
+
+    @field_validator("title_box_color")
+    @classmethod
+    def validate_box_color(cls, value: str) -> str:
+        value = value.upper()
+        if len(value) != 7 or not value.startswith("#") or any(c not in "0123456789ABCDEF" for c in value[1:]):
+            raise ValueError("colors must use #RRGGBB")
+        return value
 
     @model_validator(mode="after")
     def validate_geometry(self) -> "VideoTemplateInput":
@@ -108,14 +119,15 @@ class TextOverlay(BaseModel):
     position: Literal["top", "middle", "bottom", "top-left", "top-center", "top-right", "center", "bottom-left", "bottom-center", "bottom-right"] = "top"
     font_size: int = Field(default=48, ge=16, le=140)
     color: str = "#FFFFFF"
-    background_color: str = "#000000"
-    background_opacity: float = Field(default=0.55, ge=0, le=1)
+    # Opt-in box behind the text (set by the template); 0 draws no box.
+    box_color: str = "#000000"
+    box_opacity: float = Field(default=0, ge=0, le=1)
     x_percent: float | None = Field(default=None, ge=0, le=100)
     y_percent: float | None = Field(default=None, ge=0, le=100)
     width_percent: float | None = Field(default=None, ge=5, le=100)
     height_percent: float | None = Field(default=None, ge=2, le=100)
 
-    @field_validator("color", "background_color")
+    @field_validator("color", "box_color")
     @classmethod
     def validate_color(cls, value: str) -> str:
         value = value.upper()

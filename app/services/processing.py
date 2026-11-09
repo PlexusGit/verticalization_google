@@ -591,6 +591,8 @@ def render_chapter(
                 "size": font_size,
                 "color": text.get("color", "#FFFFFF"),
                 "opacity": 1,
+                "box_color": text.get("box_color", "#000000"),
+                "box_opacity": float(text.get("box_opacity") or 0),
                 "x": round(settings.OUTPUT_WIDTH * float(text["x_percent"]) / 100) if text.get("x_percent") is not None else None,
                 "y": round(settings.OUTPUT_HEIGHT * float(text["y_percent"]) / 100) if text.get("y_percent") is not None else None,
                 "max_width": max_width,

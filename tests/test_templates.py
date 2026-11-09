@@ -111,7 +111,49 @@ def test_render_payload_converts_template_percentages_to_pixels(monkeypatch):
     assert captured["text_overlays"][0]["x"] == 108
     assert captured["text_overlays"][0]["y"] == 346
     assert captured["text_overlays"][0]["max_width"] == 864
+    assert captured["text_overlays"][0]["box_opacity"] == 0
     assert chapter_document.data["render_options"]["automatic_focal_points"] == [{"time": 10, "x": 900, "y": 540}]
+
+
+def test_render_payload_carries_the_template_title_box(monkeypatch):
+    class Document:
+        exists = True
+
+        def __init__(self, data=None):
+            self.data = data or {}
+
+        def get(self):
+            return self
+
+        def to_dict(self):
+            return self.data
+
+        def set(self, _data):
+            return None
+
+        def update(self, data):
+            self.data.update(data)
+
+        def collection(self, _name):
+            return self
+
+        def document(self, _document_id):
+            return render_document
+
+    render_document = Document()
+    chapter_document = Document({"start_seconds": 10, "end_seconds": 20, "subtitle_text": ""})
+    chapter_document.document = lambda _document_id: render_document
+    video_document = Document({"gcs_high_path": "video/high.mp4", "video_resolution": {"w": 1920, "h": 1080}})
+    video_document.document = lambda _chapter_id: chapter_document
+    captured = {}
+    monkeypatch.setattr(processing, "_video_ref", lambda _video_id: video_document)
+    monkeypatch.setattr(processing.vertical_render, "submit", lambda payload: captured.update(payload) or {"gcs_path": payload["target_gcs_path"], "automatic_focal_points": [{"time": 10, "x": 900, "y": 540}]})
+    options = RenderRequest.model_validate({"branding": {"logo": {"gcs_path": "templates/logo.png", "x_percent": 68, "y_percent": 5, "width_percent": 27, "height_percent": 10}, "text": {"text": "Título de capítulo suficientemente longo", "x_percent": 10, "y_percent": 18, "width_percent": 80, "height_percent": 12, "font_size": 54, "box_color": "#112233", "box_opacity": 0.6}}})
+
+    processing.render_chapter("video", "chapter", options, final=True)
+
+    assert captured["text_overlays"][0]["box_color"] == "#112233"
+    assert captured["text_overlays"][0]["box_opacity"] == 0.6
 
 
 def test_template_geometry_must_stay_inside_vertical_canvas():
@@ -151,7 +193,7 @@ def test_authenticated_user_can_list_and_create_template(monkeypatch):
     assert created.status_code == 201
     written = collection.references["template_new"].written
     assert written["created_by"] == "editor@example.com"
-    assert written["title_geometry"] == {"x_percent": 12.0, "y_percent": 22.0, "width_percent": 76.0, "height_percent": 14.0, "font_size": 60}
+    assert written["title_geometry"] == {"x_percent": 12.0, "y_percent": 22.0, "width_percent": 76.0, "height_percent": 14.0, "font_size": 60, "box_color": "#000000", "box_opacity": 0.0}
 
 
 def test_templates_page_requires_login_and_renders_for_user(monkeypatch):
@@ -431,3 +473,27 @@ def test_render_rejects_missing_template(monkeypatch):
 
     assert response.status_code == 400
     assert dispatched == []
+
+
+def test_template_title_box_is_opt_in_and_flows_into_branding():
+    plain = api._template_branding({**VideoTemplateInput(title="A").model_dump(), "title_geometry": {"font_size": 54}}, {"title": "V"}, {"title": "C"})
+    assert plain["text"]["box_opacity"] == 0
+    boxed = api._template_branding(
+        {**VideoTemplateInput(title="A").model_dump(), "title_geometry": {"font_size": 54, "box_color": "#112233", "box_opacity": 0.6}},
+        {"title": "V"}, {"title": "C"},
+    )
+    options = RenderRequest.model_validate({"branding": boxed})
+    assert options.branding.text.box_color == "#112233" and options.branding.text.box_opacity == 0.6
+
+
+def test_template_title_box_validates_color_and_opacity():
+    assert VideoTemplateInput(title="A", title_box_color="#abcdef", title_box_opacity=0.5).title_box_color == "#ABCDEF"
+    for bad in ({"title_box_color": "red"}, {"title_box_opacity": 1.5}):
+        with pytest.raises(ValidationError):
+            VideoTemplateInput(title="A", **bad)
+
+
+def test_previously_stored_background_fields_do_not_enable_a_box():
+    stale = {"text": "T", "background_color": "#000000", "background_opacity": 0.55}
+    options = RenderRequest.model_validate({"branding": {"text": stale}})
+    assert options.branding.text.box_opacity == 0
