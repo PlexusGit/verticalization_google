@@ -563,4 +563,4 @@ Excluir um vídeo (capítulos, renders e arquivos): `DELETE /api/video/{id}` →
 | `404 Render indisponível` | O arquivo ainda não foi gerado; aguarde o `*_status` ficar `COMPLETED`. |
 | Download/preview retorna 403 do storage | URL assinada expirada (60 min); busque outra via `GET /api/video/{id}` ou `/download`. |
 | `horizontal_status: ERROR` | O corte 16:9 falhou, mas o vertical final está válido; veja `horizontal_error`. |
-| Segurança em produção | Nunca implante com o `SECURITY_TOKEN` padrão (`development-only-change-me`); guarde a chave em secret e não a exponha em clientes públicos. |
+| Segurança em produção | Nunca implante com o `SECURITY_TOKEN` padrão (`development-only-change-me`); guarde a chave em secret e não a exponha em clientes públicos. No Cloud Run (serviço ou job) o app **se recusa a iniciar** se `SECRET_KEY` ou `SECURITY_TOKEN` mantiver esse valor padrão, e registra um aviso se algum tiver menos de 32 caracteres. |

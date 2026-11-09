@@ -92,6 +92,38 @@ class Settings(BaseSettings):
     )
 
 
+DEFAULT_SECRET = "development-only-change-me"
+MIN_SECRET_LENGTH = 32
+
+
+def validate_production_secrets(config: Settings | None = None, environ=None) -> list[str]:
+    """Refuse to run on Cloud Run with the development default secrets.
+
+    ``SECRET_KEY`` signs session cookies and ``SECURITY_TOKEN`` is the shared
+    API key, so the repository-visible default would let anyone in. Only the
+    exact default is fatal; a short custom value is returned as a warning so a
+    working deployment is never bricked by a restart. Cloud Run is detected by
+    ``K_SERVICE`` (service) or ``CLOUD_RUN_JOB`` (pipeline job).
+    """
+
+    config = config or settings
+    environ = os.environ if environ is None else environ
+    secrets = {"SECRET_KEY": config.SECRET_KEY, "SECURITY_TOKEN": config.SECURITY_TOKEN}
+    warnings = [
+        f"{name} tem menos de {MIN_SECRET_LENGTH} caracteres; gere um valor mais forte (openssl rand -hex 32)"
+        for name, value in secrets.items()
+        if value != DEFAULT_SECRET and len(value) < MIN_SECRET_LENGTH
+    ]
+    if environ.get("K_SERVICE") or environ.get("CLOUD_RUN_JOB"):
+        defaults = [name for name, value in secrets.items() if value == DEFAULT_SECRET]
+        if defaults:
+            raise RuntimeError(
+                f"{' e '.join(defaults)} {'mantêm' if len(defaults) > 1 else 'mantém'} o valor padrão de desenvolvimento no Cloud Run; "
+                "configure segredos próprios (veja ENV_GUIDE.md) antes de iniciar"
+            )
+    return warnings
+
+
 settings = Settings()
 
 # An empty GOOGLE_APPLICATION_CREDENTIALS value blocks ADC fallback in Google

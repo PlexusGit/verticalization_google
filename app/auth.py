@@ -1,6 +1,8 @@
 """Google Identity verification and Firestore allowlist helpers."""
 from __future__ import annotations
 
+import hmac
+
 from fastapi import Request
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
@@ -67,4 +69,5 @@ def request_is_authenticated(request: Request) -> bool:
         return True
     configured = settings.SECURITY_TOKEN
     supplied = request.headers.get("X-API-Key", "")
-    return bool(configured and supplied and supplied == configured)
+    # Constant-time comparison; bytes because compare_digest rejects non-ASCII str.
+    return bool(configured and supplied and hmac.compare_digest(supplied.encode(), configured.encode()))

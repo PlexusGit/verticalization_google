@@ -11,6 +11,16 @@ def test_api_key_authentication(monkeypatch):
     assert not auth.request_is_authenticated(request)
 
 
+def test_api_key_comparison_handles_missing_and_non_ascii_values(monkeypatch):
+    monkeypatch.setattr(auth.settings, "SECURITY_TOKEN", "expected")
+    for supplied in ("", "expectéd", "ключ", "expected "):
+        request = SimpleNamespace(session={}, headers={"X-API-Key": supplied})
+        assert not auth.request_is_authenticated(request)
+    assert not auth.request_is_authenticated(SimpleNamespace(session={}, headers={}))
+    monkeypatch.setattr(auth.settings, "SECURITY_TOKEN", "")
+    assert not auth.request_is_authenticated(SimpleNamespace(session={}, headers={"X-API-Key": ""}))
+
+
 class Document:
     def __init__(self, exists): self.exists = exists
 

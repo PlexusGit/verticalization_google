@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.config import settings
+from app.config import settings, validate_production_secrets
 from app.routers import api, auth, views
 
 # Surface INFO logs (render lifecycle, pipeline stages) on the console; without
@@ -18,6 +18,9 @@ if not logging.getLogger().handlers:
         level=logging.INFO,
         format="%(asctime)s %(levelname)-5s %(name)s %(message)s",
     )
+
+for _warning in validate_production_secrets():
+    logging.getLogger("plexus.config").warning(_warning)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 app = FastAPI(

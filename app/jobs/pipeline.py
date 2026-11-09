@@ -24,7 +24,11 @@ def main(env: Mapping[str, str] | None = None) -> int:
     if not logging.getLogger().handlers:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-5s %(name)s %(message)s")
     # Imported late so a bad environment is reported before Firestore is touched.
+    from app.config import validate_production_secrets
     from app.services import processing
+
+    for warning in validate_production_secrets(environ=env):
+        logger.warning(warning)
 
     kind = (env.get("PIPELINE_KIND") or "process").strip()
     video_id = (env.get("PIPELINE_VIDEO_ID") or "").strip()
