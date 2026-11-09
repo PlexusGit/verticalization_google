@@ -41,6 +41,13 @@ incluindo easing de cosseno e limitação de crop. Tempos de legenda e tempos de
 keyframe são tempos absolutos da mídia de origem. Licenças e proveniência dos
 modelos ML estão em `THIRD_PARTY_NOTICES.md`.
 
+Nos renders finais a requisição pode levar `horizontal_output_gcs_path`. O worker
+então gera também o corte horizontal 16:9 (1920x1080, mesmos instantes, re-encode
+para precisão de quadro) a partir da fonte que já baixou para o vertical e o envia
+a esse caminho; a resposta traz `horizontal_gcs_path` ou, se o corte falhar,
+`horizontal_error` — uma falha ali nunca invalida o vertical. Sem o campo (rascunhos)
+nenhum corte é gerado.
+
 Os caminhos no Firestore são `COLLECTION_VIDEOS/{video_id}/renders/{render_id}`
 e, quando fornecido, `COLLECTION_VIDEOS/{video_id}/chapters/{chapter_id}`. Os
 status são `PROCESSING`, `COMPLETED` e `ERROR`.

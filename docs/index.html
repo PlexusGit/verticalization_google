@@ -188,7 +188,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
       ],
       "refs": [
         {"label": "process_video — todo o pipeline de pré-processamento", "path": "app/services/processing.py", "start": 113, "end": 349, "symbol": "def _process_video"},
-        {"label": "_stage / _set_error — transições de estado e erro", "path": "app/services/processing.py", "start": 885, "end": 901, "symbol": "def _stage"},
+        {"label": "_stage / _set_error — transições de estado e erro", "path": "app/services/processing.py", "start": 904, "end": 920, "symbol": "def _stage"},
         {"label": "events.record — log estruturado + histórico durável", "path": "app/services/events.py", "start": 31, "end": 66, "symbol": "def record"},
         {"label": "VideoStatus — estados possíveis", "path": "app/models.py", "start": 64, "end": 73, "symbol": "class VideoStatus"},
         {"label": "POST /retry — retoma a partir de ERROR/UPLOADING", "path": "app/routers/api.py", "start": 1058, "end": 1070, "symbol": "async def retry_video"},
@@ -304,7 +304,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
       ],
       "refs": [
         {"label": "render_chapter — registro, payload, chamada ao worker e persistência", "path": "app/services/processing.py", "start": 468, "end": 780, "symbol": "def render_chapter"},
-        {"label": "montagem do payload enviado ao worker", "path": "app/services/processing.py", "start": 573, "end": 619, "symbol": "payload = {"},
+        {"label": "montagem do payload enviado ao worker", "path": "app/services/processing.py", "start": 589, "end": 635, "symbol": "payload = {"},
         {"label": "vertical_render.submit — HTTP com retry de rede", "path": "app/services/vertical_render.py", "start": 104, "end": 140, "symbol": "def submit"},
         {"label": "worker: vertical_render — auth, validação, download, motor, upload", "path": "vertical_render_function/main.py", "start": 264, "end": 358, "symbol": "def vertical_render"},
         {"label": "worker: validate_request — contrato do payload", "path": "vertical_render_function/renderer.py", "start": 116, "end": 183, "symbol": "def validate_request"},
@@ -348,7 +348,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
           {"label": "campos de configuração no fingerprint", "path": "vertical_render_function/autoframe_v10/artifacts.py", "start": 21, "end": 34, "symbol": "_FINGERPRINT_FIELDS"},
           {"label": "dumps/loads do plano (gzip) e caminho do artefato", "path": "vertical_render_function/autoframe_v10/artifacts.py", "start": 74, "end": 88, "symbol": "def dumps_plan"},
           {"label": "worker: reuso ou análise + publicação do plano", "path": "vertical_render_function/main.py", "start": 198, "end": 261, "symbol": "expected_fp = artifacts.plan_fingerprint"},
-          {"label": "app: persistência dos artefatos devolvidos pelo worker", "path": "app/services/processing.py", "start": 650, "end": 690, "symbol": "result = _submit_or_adopt"}
+          {"label": "app: persistência dos artefatos devolvidos pelo worker", "path": "app/services/processing.py", "start": 669, "end": 709, "symbol": "result = _submit_or_adopt"}
         ]}
       ],
       "io": {"in": "Fonte <code>_high.mp4</code>, <code>trim_start/end</code>, dispositivo e encoder.", "out": "MP4 1080×1920 H.264/AAC + plano gzip no GCS."},
@@ -386,7 +386,7 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"label": "build_overlay_filters — legendas, logo e títulos", "path": "vertical_render_function/renderer.py", "start": 432, "end": 513, "symbol": "def build_overlay_filters"},
         {"label": "_layout_title_box — quebra e ajuste do título", "path": "vertical_render_function/renderer.py", "start": 331, "end": 367, "symbol": "def _layout_title_box"},
         {"label": "app: cues absolutos e conversão de % para pixels", "path": "app/services/processing.py", "start": 520, "end": 572, "symbol": "chapter_start = float"},
-        {"label": "app: captions só nos finais", "path": "app/services/processing.py", "start": 633, "end": 636, "symbol": "\"captions\": captions if final else []"},
+        {"label": "app: captions só nos finais", "path": "app/services/processing.py", "start": 649, "end": 652, "symbol": "\"captions\": captions if final else []"},
         {"label": "UI: simulação de legendas no editor", "path": "app/templates/video_detail.html", "start": 99, "end": 100, "symbol": "function parseCues"}
       ]
     },
@@ -428,27 +428,32 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"label": "_approval_block_reason — pré-condições", "path": "app/routers/api.py", "start": 65, "end": 75, "symbol": "def _approval_block_reason"},
         {"label": "_template_branding — macros e geometria", "path": "app/routers/api.py", "start": 78, "end": 107, "symbol": "def _template_branding"},
         {"label": "_resolve_template_choice — explícito, none ou padrão", "path": "app/routers/api.py", "start": 366, "end": 375, "symbol": "def _resolve_template_choice"},
-        {"label": "render_final_chapters — lote de finais", "path": "app/services/processing.py", "start": 790, "end": 836, "symbol": "def _render_final_chapters"},
+        {"label": "render_final_chapters — lote de finais", "path": "app/services/processing.py", "start": 809, "end": 855, "symbol": "def _render_final_chapters"},
         {"label": "POST /retry-finals — refaz só os finais com falha", "path": "app/routers/api.py", "start": 1065, "end": 1095, "symbol": "async def retry_final_renders"}
       ]
     },
     {
-      "id": "horizontal", "title": "Corte horizontal 16:9", "status": ["RENDERING_FINALS"], "who": ["app"],
-      "summary": "Depois de cada final vertical bem-sucedido, o app gera um corte horizontal 1920×1080 com os mesmos instantes de início e fim.",
+      "id": "horizontal", "title": "Corte horizontal 16:9", "status": ["RENDERING_FINALS"], "who": ["app", "render"],
+      "summary": "Junto de cada final vertical, o <b>worker de render</b> gera um corte horizontal 1920×1080 com os mesmos instantes de início e fim, reaproveitando a fonte que já baixou para o vertical (nenhum download extra e nada de ffmpeg no container do app).",
       "params": [
-        ["Fonte", "<code>gcs_high_path</code> (ou, na falta, <code>gcs_source_path</code>) baixado para um diretório temporário"],
-        ["Corte", "<code>-ss start -to end</code> com <b>re-encode</b> (<code>-c copy</code> pararia em GOPs e perderia precisão de quadro)"],
+        ["Fonte", "o mesmo <code>_high.mp4</code> já baixado pelo worker para o render vertical (a requisição leva <code>horizontal_output_gcs_path</code>, só nos finais)"],
+        ["Corte", "<code>-ss start -t duração</code> com <b>re-encode</b> (<code>-c copy</code> pararia em GOPs e perderia precisão de quadro)"],
         ["Filtro", "<code>scale=1920:1080:force_original_aspect_ratio=decrease,pad=…,setsar=1</code> — saída sempre 1920×1080"],
         ["Codec", "<code>libx264 -preset veryfast -crf 20</code>, AAC 160 kb/s, <code>+faststart</code>"],
         ["Destino", "<code>{video}/chapters/{chapter}/horizontal_{render_id}.mp4</code>"]
       ],
       "facts": [
         "Roda <b>dentro do guarda do render mais recente</b>: finais superados não geram cortes obsoletos.",
-        "Uma falha aqui <b>não invalida</b> o final vertical: grava <code>horizontal_status=ERROR</code> e <code>horizontal_error</code>."
+        "Uma falha aqui <b>não invalida</b> o final vertical: o worker responde <code>horizontal_error</code> e o app grava <code>horizontal_status=ERROR</code> e <code>horizontal_error</code>; o vertical continua <code>COMPLETED</code>.",
+        "<b>Compatibilidade:</b> se o resultado do worker não traz nenhum dos dois campos (worker antigo, ou render adotado de uma versão anterior), o app ainda gera o corte localmente com <code>_render_horizontal_cut</code>.",
+        "<b>Por quê no worker:</b> o container do app/job tem 2 vCPU e 4 GiB, e o <code>/tmp</code> conta como memória; baixar o <code>_high.mp4</code> inteiro por capítulo, com até 5 capítulos ao mesmo tempo, podia estourar a memória em vídeos longos. O worker tem 8 GiB e 4 vCPU, atende uma requisição por instância e já tem a fonte em disco."
       ],
       "refs": [
-        {"label": "_render_horizontal_cut — ffmpeg do corte 16:9", "path": "app/services/processing.py", "start": 415, "end": 465, "symbol": "def _render_horizontal_cut"},
-        {"label": "integração após o final vertical (estado + erro isolado)", "path": "app/services/processing.py", "start": 722, "end": 745, "symbol": "_render_horizontal_cut(video, chapter"}
+        {"label": "worker: _render_horizontal_cut — corte 16:9 isolado, mesma fonte", "path": "vertical_render_function/main.py", "start": 134, "end": 146, "symbol": "def _render_horizontal_cut"},
+        {"label": "worker: render_horizontal — ffmpeg do corte 16:9", "path": "vertical_render_function/renderer.py", "start": 598, "end": 606, "symbol": "def render_horizontal"},
+        {"label": "app: _horizontal_cut_path — usa o resultado do worker ou o corte local", "path": "app/services/processing.py", "start": 442, "end": 455, "symbol": "def _horizontal_cut_path"},
+        {"label": "fallback local: _render_horizontal_cut — ffmpeg do corte 16:9", "path": "app/services/processing.py", "start": 458, "end": 508, "symbol": "def _render_horizontal_cut"},
+        {"label": "integração após o final vertical (estado + erro isolado)", "path": "app/services/processing.py", "start": 752, "end": 775, "symbol": "_horizontal_cut_path(result, video, chapter"}
       ]
     },
     {
@@ -481,12 +486,12 @@ mark{background:color-mix(in srgb,var(--warn) 45%,transparent);color:inherit;bor
         {"label": "app: _run_render_batch — capítulos renderizados em paralelo", "path": "app/services/processing.py", "start": 389, "end": 409, "symbol": "def _run_render_batch"},
         {"label": "worker: _heartbeat_loop — ping no documento do render", "path": "vertical_render_function/main.py", "start": 111, "end": 130, "symbol": "def _heartbeat_loop"},
         {"label": "app: await_result — espera o resultado e detecta render perdido", "path": "app/services/vertical_render.py", "start": 86, "end": 126, "symbol": "def await_result"},
-        {"label": "guarda do render mais recente (sucesso)", "path": "app/services/processing.py", "start": 701, "end": 721, "symbol": "fresh = chapter_ref.get().to_dict()"},
-        {"label": "tratamento de falha e relançamento", "path": "app/services/processing.py", "start": 726, "end": 770, "symbol": "except Exception as exc"},
+        {"label": "guarda do render mais recente (sucesso)", "path": "app/services/processing.py", "start": 720, "end": 740, "symbol": "fresh = chapter_ref.get().to_dict()"},
+        {"label": "tratamento de falha e relançamento", "path": "app/services/processing.py", "start": 745, "end": 789, "symbol": "except Exception as exc"},
         {"label": "fallback NVENC → libx264 no transcode", "path": "transcode_function/processor.py", "start": 519, "end": 532, "symbol": "encoder_used"},
         {"label": "fallback de encoder no v10", "path": "vertical_render_function/autoframe_v10/render.py", "start": 224, "end": 247, "symbol": "attempts = "},
-        {"label": "fallback v10 → recorte central determinístico", "path": "vertical_render_function/main.py", "start": 357, "end": 364, "symbol": "recorte central determin"},
-        {"label": "autenticação dos workers (falha fechada)", "path": "vertical_render_function/main.py", "start": 133, "end": 136, "symbol": "def _authorized"}
+        {"label": "fallback v10 → recorte central determinístico", "path": "vertical_render_function/main.py", "start": 373, "end": 380, "symbol": "recorte central determin"},
+        {"label": "autenticação dos workers (falha fechada)", "path": "vertical_render_function/main.py", "start": 149, "end": 152, "symbol": "def _authorized"}
       ]
     },
     {

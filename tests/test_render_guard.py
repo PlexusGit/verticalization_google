@@ -327,3 +327,58 @@ def test_v10_render_drops_focal_points_bounds(monkeypatch, chapter_ref):
     render_chapter("v_test", "chapter_001", RenderRequest(), final=False)
 
     assert "focal_points_bounds" not in chapter_ref.data["render_options"]
+
+
+def _submit_capturing(monkeypatch, result, payloads):
+    monkeypatch.setattr(
+        processing.vertical_render, "submit", lambda payload: payloads.append(payload) or {"gcs_path": "final.mp4", **result}
+    )
+
+
+def test_final_payload_asks_the_worker_for_the_horizontal_cut(monkeypatch, chapter_ref):
+    calls = _mock_horizontal_cut(monkeypatch, chapter_ref)
+    monkeypatch.setattr(processing, "uuid", FakeUuidModule(["a9a9a9a9a9a9"]))
+    payloads = []
+    _submit_capturing(monkeypatch, {"horizontal_gcs_path": "v_test/chapters/chapter_001/horizontal_final_a9a9a9a9a9.mp4"}, payloads)
+
+    render_chapter("v_test", "chapter_001", RenderRequest(), final=True)
+
+    assert payloads[0]["horizontal_output_gcs_path"] == "v_test/chapters/chapter_001/horizontal_final_a9a9a9a9a9.mp4"
+    assert chapter_ref.data["horizontal_status"] == "COMPLETED"
+    assert chapter_ref.data["horizontal_gcs_path"] == "v_test/chapters/chapter_001/horizontal_final_a9a9a9a9a9.mp4"
+    assert calls == {}  # nothing was downloaded, encoded or uploaded in the app container
+
+
+def test_worker_horizontal_path_is_stored_relative_to_the_bucket(monkeypatch, chapter_ref):
+    _mock_horizontal_cut(monkeypatch, chapter_ref)
+    monkeypatch.setattr(processing, "uuid", FakeUuidModule(["b9b9b9b9b9b9"]))
+    uri = f"gs://{processing.settings.BUCKET_NAME}/v_test/chapters/chapter_001/horizontal_final_b9b9b9b9b9.mp4"
+    _submit_capturing(monkeypatch, {"horizontal_gcs_path": uri}, [])
+
+    render_chapter("v_test", "chapter_001", RenderRequest(), final=True)
+
+    assert chapter_ref.data["horizontal_gcs_path"] == "v_test/chapters/chapter_001/horizontal_final_b9b9b9b9b9.mp4"
+
+
+def test_worker_reported_horizontal_error_keeps_the_vertical_final(monkeypatch, chapter_ref):
+    calls = _mock_horizontal_cut(monkeypatch, chapter_ref)
+    monkeypatch.setattr(processing, "uuid", FakeUuidModule(["c9c9c9c9c9c9"]))
+    _submit_capturing(monkeypatch, {"horizontal_error": "ffmpeg horizontal cut failed: boom"}, [])
+
+    render_chapter("v_test", "chapter_001", RenderRequest(), final=True)
+
+    assert chapter_ref.data["final_status"] == "COMPLETED"
+    assert chapter_ref.data["horizontal_status"] == "ERROR"
+    assert "boom" in chapter_ref.data["horizontal_error"]
+    assert "horizontal_gcs_path" not in chapter_ref.data
+    assert calls == {}  # a reported failure is not silently redone locally
+
+
+def test_drafts_never_request_a_horizontal_cut(monkeypatch, chapter_ref):
+    monkeypatch.setattr(processing, "uuid", FakeUuidModule(["d9d9d9d9d9d9"]))
+    payloads = []
+    _submit_capturing(monkeypatch, {}, payloads)
+
+    render_chapter("v_test", "chapter_001", RenderRequest(), final=False)
+
+    assert payloads[0]["horizontal_output_gcs_path"] == ""

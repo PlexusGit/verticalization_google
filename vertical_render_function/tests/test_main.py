@@ -212,3 +212,56 @@ def test_render_starts_and_stops_the_heartbeat(app, monkeypatch):
     (target, args, daemon) = started[0]
     assert target == main._heartbeat_loop and args[0] == "video_1" and args[1] == "render_1" and daemon
     assert stops == [True]
+
+
+def _horizontal_setup(monkeypatch, *, horizontal):
+    monkeypatch.setattr(main, "API_KEY", "key")
+    monkeypatch.setattr(main, "update_status", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "_download", lambda _uri, destination: Path(destination).write_bytes(b"source"))
+    monkeypatch.setattr(main, "analyze_focal_points", lambda *_args: ())
+    monkeypatch.setattr(main, "render", lambda spec, input_path, output_path, **_kw: Path(output_path).write_bytes(b"mp4"))
+    uploads = []
+    monkeypatch.setattr(main, "_upload", lambda uri, source: uploads.append(uri) or f"gs://bucket/{uri}")
+    cuts = []
+
+    def fake_horizontal(spec, input_path, output_path, **_kw):
+        assert Path(input_path).exists()
+        cuts.append(spec.horizontal_output_gcs_path)
+        if horizontal == "fail":
+            raise RuntimeError("ffmpeg horizontal cut failed: boom")
+        Path(output_path).write_bytes(b"horizontal")
+
+    monkeypatch.setattr(main, "render_horizontal", fake_horizontal)
+    return uploads, cuts
+
+
+def test_final_render_also_produces_the_horizontal_cut_from_the_same_source(app, monkeypatch):
+    uploads, cuts = _horizontal_setup(monkeypatch, horizontal="ok")
+    payload = {**valid_payload(), "horizontal_output_gcs_path": "video_1/chapters/chapter_1/horizontal_render_1.mp4"}
+
+    body, status, _ = invoke(app, json=payload, headers={"X-API-Key": "key"})
+
+    assert status == 200 and body["status"] == "COMPLETED"
+    assert cuts == ["video_1/chapters/chapter_1/horizontal_render_1.mp4"]
+    assert body["horizontal_gcs_path"] == "gs://bucket/video_1/chapters/chapter_1/horizontal_render_1.mp4"
+    assert "horizontal_error" not in body and len(uploads) == 2
+
+
+def test_horizontal_failure_never_fails_the_vertical_render(app, monkeypatch):
+    uploads, cuts = _horizontal_setup(monkeypatch, horizontal="fail")
+    payload = {**valid_payload(), "horizontal_output_gcs_path": "video_1/chapters/chapter_1/horizontal_render_1.mp4"}
+
+    body, status, _ = invoke(app, json=payload, headers={"X-API-Key": "key"})
+
+    assert status == 200 and body["status"] == "COMPLETED" and body["output_gcs_path"]
+    assert "boom" in body["horizontal_error"] and "horizontal_gcs_path" not in body
+    assert len(uploads) == 1  # only the vertical output was uploaded
+
+
+def test_drafts_without_a_horizontal_path_skip_the_cut(app, monkeypatch):
+    _uploads, cuts = _horizontal_setup(monkeypatch, horizontal="ok")
+
+    body, status, _ = invoke(app, json=valid_payload(), headers={"X-API-Key": "key"})
+
+    assert status == 200 and cuts == []
+    assert "horizontal_gcs_path" not in body and "horizontal_error" not in body

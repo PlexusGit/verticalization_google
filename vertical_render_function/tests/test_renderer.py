@@ -194,3 +194,35 @@ def test_title_box_rejects_invalid_color_and_opacity():
     bad_opacity = renderer.validate_request(payload(text_overlays=[{"text": "T", "size": 40, "box_opacity": "x"}]))
     with pytest.raises(renderer.ValidationError):
         renderer.build_video_filter(bad_opacity, None, None)
+
+
+def test_horizontal_output_path_is_optional_and_validated():
+    assert renderer.validate_request(payload()).horizontal_output_gcs_path == ""
+    assert renderer.validate_request(payload(horizontal_output_gcs_path="")).horizontal_output_gcs_path == ""
+    spec = renderer.validate_request(payload(horizontal_output_gcs_path="v/chapters/c/horizontal_r.mp4"))
+    assert spec.horizontal_output_gcs_path == "v/chapters/c/horizontal_r.mp4"
+    with pytest.raises(renderer.ValidationError):
+        renderer.validate_request(payload(horizontal_output_gcs_path="../escape.mp4"))
+
+
+def test_horizontal_command_trims_by_duration_and_letterboxes_to_16_9():
+    spec = renderer.validate_request(payload(trim_start=10, trim_end=25))
+    command = renderer.build_horizontal_command(spec, "in.mp4", "out.mp4")
+    assert command[command.index("-ss") + 1] == "10" and command[command.index("-t") + 1] == "15"
+    assert command.index("-ss") < command.index("-i") and command[-1] == "out.mp4"
+    assert "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080" in command[command.index("-vf") + 1]
+    assert "-c" not in command  # re-encoded, never stream-copied
+
+
+def test_render_horizontal_reports_ffmpeg_failures_concisely():
+    import subprocess
+
+    spec = renderer.validate_request(payload())
+    failure = subprocess.CalledProcessError(1, "ffmpeg", stderr="boom " * 1000)
+    with patch.object(renderer.subprocess, "run", side_effect=failure):
+        with pytest.raises(RuntimeError, match="horizontal cut failed") as info:
+            renderer.render_horizontal(spec, "in.mp4", "out.mp4")
+    assert len(str(info.value)) < 1700
+    with patch.object(renderer.subprocess, "run", side_effect=subprocess.TimeoutExpired("ffmpeg", 1)):
+        with pytest.raises(RuntimeError, match="timed out"):
+            renderer.render_horizontal(spec, "in.mp4", "out.mp4")

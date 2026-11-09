@@ -25,6 +25,7 @@ from renderer import (
     build_overlay_filters,
     compact_keyframes,
     render,
+    render_horizontal,
     validate_request,
     write_ass_captions,
 )
@@ -128,6 +129,21 @@ def _heartbeat_loop(video_id: str, render_id: str, stop: threading.Event) -> Non
             ref.set({"heartbeat_at": firestore.SERVER_TIMESTAMP}, merge=True)
         except Exception:
             logger.warning("Heartbeat do render %s falhou", render_id, exc_info=True)
+
+
+def _render_horizontal_cut(spec: RenderSpec, source_path: str, workdir: str) -> dict[str, Any]:
+    """Plain 16:9 cut of the same bounds from the source already on disk.
+
+    Isolated on purpose: a failure here is reported in the response but must
+    never fail the vertical render that already succeeded.
+    """
+    try:
+        output = str(Path(workdir) / "horizontal.mp4")
+        render_horizontal(spec, source_path, output)
+        return {"horizontal_gcs_path": _upload(spec.horizontal_output_gcs_path, output)}
+    except Exception as exc:
+        logger.exception("Corte horizontal falhou; o vertical segue válido")
+        return {"horizontal_error": str(exc)[:500]}
 
 
 def _authorized(request: Any) -> bool:
@@ -366,10 +382,11 @@ def vertical_render(request: Any):
                 spec = _add_automatic_focus(spec, source_path)
                 render(spec, source_path, output_path, ass_path=ass_path, logo_path=logo_path)
             output_uri = _upload(spec.output_gcs_path, output_path)
+            horizontal = _render_horizontal_cut(spec, source_path, workdir) if spec.horizontal_output_gcs_path else {}
 
         # v10 returns no focal keyframes — the reusable artifact is the plan.
         points = [] if used_v10 else list(spec.automatic_focal_points)
-        body = {"status": "COMPLETED", "video_id": video_id, "render_id": render_id, "chapter_id": chapter_id, "output_gcs_path": output_uri, "width": 1080, "height": 1920, "automatic_focal_points": points, "focal_strategy_version": strategy_version, **extras}
+        body = {"status": "COMPLETED", "video_id": video_id, "render_id": render_id, "chapter_id": chapter_id, "output_gcs_path": output_uri, "width": 1080, "height": 1920, "automatic_focal_points": points, "focal_strategy_version": strategy_version, **extras, **horizontal}
         # The full response is stored with the status so a caller that lost the
         # HTTP response (gateway error, restarted app) can still adopt this
         # render instead of repeating a multi-minute job.

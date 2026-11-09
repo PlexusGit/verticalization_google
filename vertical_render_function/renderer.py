@@ -55,6 +55,9 @@ class RenderSpec:
     # so final renders reuse the exact approved framing instead of re-analyzing.
     camera_plan_gcs_path: str = ""
     camera_plan_fingerprint: str = ""
+    # When set, a plain 16:9 cut of the same bounds is also produced from the
+    # already-downloaded source and uploaded here (finals only).
+    horizontal_output_gcs_path: str = ""
 
     @property
     def duration(self) -> float:
@@ -180,6 +183,7 @@ def validate_request(payload: Any) -> RenderSpec:
         text_overlays=tuple(overlays),
         camera_plan_gcs_path=_optional_gcs_path(payload.get("camera_plan_gcs_path"), "camera_plan_gcs_path"),
         camera_plan_fingerprint=_optional_fingerprint(payload.get("camera_plan_fingerprint")),
+        horizontal_output_gcs_path=_optional_gcs_path(payload.get("horizontal_output_gcs_path"), "horizontal_output_gcs_path"),
     )
 
 
@@ -574,3 +578,29 @@ def render(spec: RenderSpec, input_path: str, output_path: str, ass_path: str | 
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or "unknown ffmpeg error")[-1500:]
         raise RuntimeError(f"ffmpeg render failed: {detail}") from exc
+
+
+def build_horizontal_command(spec: RenderSpec, input_path: str, output_path: str) -> list[str]:
+    """ffmpeg arguments for the plain 16:9 cut of the chapter bounds.
+
+    Re-encodes so the trim is frame-accurate (``-c copy`` would snap to GOP
+    boundaries) and letterboxes anything that is not already 16:9.
+    """
+    return [
+        "ffmpeg", "-nostdin", "-hide_banner", "-y",
+        "-ss", f"{spec.trim_start:g}", "-t", f"{spec.duration:g}", "-i", input_path,
+        "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", output_path,
+    ]
+
+
+def render_horizontal(spec: RenderSpec, input_path: str, output_path: str, timeout: int = 1800) -> None:
+    """Produce the 16:9 cut; raises a concise error on failure."""
+    try:
+        subprocess.run(build_horizontal_command(spec, input_path, output_path), check=True, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("ffmpeg horizontal cut timed out") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "unknown ffmpeg error")[-1500:]
+        raise RuntimeError(f"ffmpeg horizontal cut failed: {detail}") from exc

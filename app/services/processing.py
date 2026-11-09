@@ -439,6 +439,22 @@ def _submit_or_adopt(video_id: str, render_id: str, payload: dict) -> dict:
     raise last_exc  # type: ignore[misc]
 
 
+def _horizontal_cut_path(result: dict, video: dict, chapter: dict, video_id: str, chapter_id: str, render_id: str) -> str:
+    """The 16:9 cut the render worker produced, or one made here as a fallback.
+
+    Workers that predate the in-worker cut return neither key, and adopted
+    results recorded by them stay that way, so those still use the local path.
+    """
+
+    if result.get("horizontal_error"):
+        raise RuntimeError(str(result["horizontal_error"]))
+    if result.get("horizontal_gcs_path"):
+        path = str(result["horizontal_gcs_path"])
+        managed_prefix = f"gs://{settings.BUCKET_NAME}/"
+        return path[len(managed_prefix):] if path.startswith(managed_prefix) else path
+    return _render_horizontal_cut(video, chapter, video_id, chapter_id, render_id)
+
+
 def _render_horizontal_cut(video: dict, chapter: dict, video_id: str, chapter_id: str, render_id: str) -> str:
     """Trim the normalized source to the chapter bounds into a plain 16:9 cut.
 
@@ -644,6 +660,9 @@ def render_chapter(
         },
         "logo": logo,
         "text_overlays": text_overlays,
+        # Finals also get the plain 16:9 cut from the worker, which already has
+        # the source on disk; drafts never do.
+        "horizontal_output_gcs_path": f"{video_id}/chapters/{chapter_id}/horizontal_{render_id}.mp4" if final else "",
     }
     events.record(
         video_id,
@@ -738,7 +757,7 @@ def render_chapter(
                 # fail the vertical final that already completed.
                 chapter_ref.update({"horizontal_status": "PROCESSING", "updated_at": firestore.SERVER_TIMESTAMP})
                 try:
-                    horizontal_path = _render_horizontal_cut(video, chapter, video_id, chapter_id, render_id)
+                    horizontal_path = _horizontal_cut_path(result, video, chapter, video_id, chapter_id, render_id)
                     chapter_ref.update(
                         {
                             "horizontal_status": "COMPLETED",
