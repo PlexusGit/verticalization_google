@@ -6,5 +6,5 @@ environments that only run the legacy renderer.
 """
 from __future__ import annotations
 
-from .artifacts import AUTOFRAME_STRATEGY_VERSION  # noqa: F401
+from .artifacts import AUTOFRAME_STRATEGY_VERSION, STRATEGY_VERSIONS, strategy_version  # noqa: F401
 from .config import Config, resolve_device, resolve_encoder  # noqa: F401

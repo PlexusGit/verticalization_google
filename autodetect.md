@@ -2,6 +2,8 @@
 
 Este documento descreve o comportamento atual do algoritmo de enquadramento automático do Plexus Vertical Cuts. Esta é a **versão 10 da estratégia** (`AUTOFRAME_STRATEGY_VERSION = 10`, `focal_strategy_version = 10` nos `render_options` do capítulo): em vez de rastrear o rosto frame a frame com heurísticas reativas, o vídeo passa por **três passes offline** — análise, planejamento de câmera e composição — com look-ahead sobre o capítulo inteiro antes de decidir para onde a câmera virtual olha.
 
+> **Motores:** `AUTOFRAME_ENGINE=v10` usa o detector YOLO-face (imagem GPU); `AUTOFRAME_ENGINE=v12` usa a mesma pipeline com o detector **YuNet** (OpenCV, MIT) — detecção a cada 2 frames em 640 px, LR-ASD com escalas `(1,2,4)`, interpolação cúbica e `libx264 -preset veryfast` — e é o motor da imagem CPU, sem ultralytics. O `v12` grava `focal_strategy_version = 12` e o fingerprint inclui o motor, então planos de um motor nunca são reaproveitados pelo outro. O planejador e o compositor são os mesmos.
+
 > A estratégia anterior (v3, YuNet + fluxo óptico + keyframes no FFmpeg) continua disponível como caminho de rollback: basta definir `AUTOFRAME_ENGINE=legacy` no `.env`/deploy do worker. O modo manual `split_stack` não é afetado pela v10.
 
 ## Objetivo
@@ -102,10 +104,10 @@ O **fingerprint** (SHA-256) cobre tudo que determina o plano: caminho e **genera
 
 ## 6. Requisitos de runtime
 
-- pacote `vertical_render_function/autoframe_v10/` + `requirements-v10.txt`;
-- modelos via **Git LFS**: `models/yolov11n-face.pt` (GPL-3.0, Ultralytics AGPL-3.0) e `third_party/LR-ASD/weight/finetuning_TalkSet.model` (MIT, commit `1b6dcd2`); checksums são validados no build da imagem e em `THIRD_PARTY_NOTICES.md`;
-- CPU pura funciona, mas a análise roda YOLO em **todos os frames** — para capítulos longos, `TRANSCODE_USE_GPU=1` (L4 no Cloud Run) é o caminho dimensionado;
-- `AUTOFRAME_ENGINE=v10|legacy` escolhe o engine; `AUTOFRAME_DEVICE`/`AUTOFRAME_ENCODER` permitem overrides manuais.
+- pacote `vertical_render_function/autoframe_v10/` + `requirements-autoframe.txt` (e `requirements-yolo.txt` só nas imagens GPU);
+- modelos: `models/face_detection_yunet_2023mar.onnx` (YuNet, MIT, v12), via **Git LFS** `models/yolov11n-face.pt` (GPL-3.0, Ultralytics AGPL-3.0, só na imagem GPU) e `third_party/LR-ASD/weight/finetuning_TalkSet.model` (MIT, commit `1b6dcd2`); checksums são validados no build da imagem e em `THIRD_PARTY_NOTICES.md`;
+- na CPU use `AUTOFRAME_ENGINE=v12`: o YOLO do `v10` roda em **todos os frames** e é bem mais lento (num clipe de 30 s medido localmente, a análise levou 77 s no v10 e 9 s no v12, com planos de câmera equivalentes); `TRANSCODE_USE_GPU=1` (L4) mantém o `v10`;
+- `AUTOFRAME_ENGINE=v12|v10|legacy` escolhe o engine; `AUTOFRAME_DEVICE`/`AUTOFRAME_ENCODER` permitem overrides manuais.
 
 ## Limitações atuais
 

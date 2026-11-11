@@ -15,7 +15,8 @@ from pathlib import Path
 
 from .config import Config
 
-AUTOFRAME_STRATEGY_VERSION = 10
+AUTOFRAME_STRATEGY_VERSION = 10          # v10 (kept for existing imports)
+STRATEGY_VERSIONS = {"v10": 10, "v12": 12}
 PLAN_FORMAT = "autoframe-plan/1"
 
 # Config fields that change the planned trajectory.  I/O paths, device, and
@@ -33,7 +34,15 @@ _FINGERPRINT_FIELDS = (
     "output_w", "output_h",
 )
 
+# Extra fields that distinguish a v12 plan; v10 fingerprints must stay unchanged
+# so plans already stored for v10 chapters remain reusable.
+_V12_FINGERPRINT_FIELDS = ("face_detector", "face_stride", "face_nms", "asd_durations", "interp")
+
 _checksums: dict[str, str] = {}
+
+
+def strategy_version(cfg: Config) -> int:
+    return STRATEGY_VERSIONS.get(cfg.engine, AUTOFRAME_STRATEGY_VERSION)
 
 
 def file_sha256(path: str) -> str | None:
@@ -57,7 +66,7 @@ def plan_fingerprint(cfg: Config, *, source_gcs_path: str, source_generation: st
     """Deterministic identity of everything a plan depends on."""
     inputs = {
         "format": PLAN_FORMAT,
-        "strategy": AUTOFRAME_STRATEGY_VERSION,
+        "strategy": strategy_version(cfg),
         "source_gcs_path": source_gcs_path,
         "source_generation": str(source_generation) if source_generation is not None else None,
         "trim_start": round(float(trim_start), 3),
@@ -68,6 +77,9 @@ def plan_fingerprint(cfg: Config, *, source_gcs_path: str, source_generation: st
         "asd_weights": file_sha256(cfg.asd_weights),
         "config": {name: getattr(cfg, name) for name in _FINGERPRINT_FIELDS},
     }
+    if cfg.engine == "v12":
+        inputs["config"].update({name: getattr(cfg, name) for name in _V12_FINGERPRINT_FIELDS})
+        inputs["config"]["asd_durations"] = list(cfg.asd_durations)
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
 
 
@@ -84,8 +96,8 @@ def loads_plan(blob: bytes) -> dict:
     return plan
 
 
-def artifact_blob_path(video_id: str, chapter_id: str, fingerprint: str) -> str:
-    return f"{video_id}/chapters/{chapter_id}/autoframe/v{AUTOFRAME_STRATEGY_VERSION}/{fingerprint}.plan.json.gz"
+def artifact_blob_path(video_id: str, chapter_id: str, fingerprint: str, version: int = AUTOFRAME_STRATEGY_VERSION) -> str:
+    return f"{video_id}/chapters/{chapter_id}/autoframe/v{version}/{fingerprint}.plan.json.gz"
 
 
 def write_local_plan(plan: dict, path: str | Path) -> None:

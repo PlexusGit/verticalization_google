@@ -35,7 +35,12 @@ AUTOFRAME_ENGINE="${AUTOFRAME_ENGINE:-legacy}"
 # cpu-only wheel index to keep the image small.
 BUILD_ARGS=()
 if [[ "${USE_GPU}" == "1" ]]; then
-  BUILD_ARGS+=(--build-arg "TORCH_INDEX=https://pypi.org/simple")
+  # The v10 detector (YOLO, ultralytics/AGPL) ships only in GPU images; the CPU
+  # image runs v12 (YuNet, MIT).
+  BUILD_ARGS+=(--build-arg "TORCH_INDEX=https://pypi.org/simple" --build-arg "INSTALL_YOLO=1")
+elif [[ "${AUTOFRAME_ENGINE}" == "v10" ]]; then
+  echo "AUTOFRAME_ENGINE=v10 needs the GPU image (TRANSCODE_USE_GPU=1); use v12 for CPU." >&2
+  exit 1
 fi
 
 printf 'Deploying %s\nImage: %s\nAutoframe engine: %s (GPU=%s)\n' "${SERVICE}" "${IMAGE}" "${AUTOFRAME_ENGINE}" "${USE_GPU}"

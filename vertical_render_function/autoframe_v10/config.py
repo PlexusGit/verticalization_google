@@ -10,7 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, replace
 from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -31,11 +31,17 @@ class Config:
     output_w: int = 1080
     output_h: int = 1920
 
-    # Detecção de rosto (YOLO-face)
+    # Motor: "v10" (YOLO-face, GPU) ou "v12" (YuNet MIT, CPU) — ver Config.for_engine
+    engine: str = "v10"
+
+    # Detecção de rosto: "yolo" (ultralytics) ou "yunet" (OpenCV FaceDetectorYN)
+    face_detector: str = "yolo"
     face_model: str = str(MODELS_DIR / "yolov11n-face.pt")
     face_conf: float = 0.5
     face_imgsz: int = 640
-    face_batch: int = 16        # frames por chamada do detector
+    face_batch: int = 16        # frames por chamada do detector (yolo)
+    face_nms: float = 0.3       # yunet
+    face_stride: int = 1        # processa 1 a cada N frames; o tracker interpola o resto
 
     # Tracking (IoU, por cena)
     track_iou: float = 0.4
@@ -77,8 +83,30 @@ class Config:
     device: str = "cpu"            # resolvido por resolve_device()
     encoder: str = "libx264"       # resolvido por resolve_encoder()
     bitrate: str = "8M"
+    interp: str = "lanczos4"       # "lanczos4" | "cubic" | "linear"
+    encoder_preset: str = ""       # vazio = padrão do encoder (libx264: medium)
     render_timeout: int = 3300     # abaixo do timeout do Cloud Run (3600s)
     debug: bool = False            # vídeo lado a lado; apenas uso local
+
+    @classmethod
+    def for_engine(cls, engine: str, **overrides) -> "Config":
+        """Build a Config for ``v10`` (YOLO-face) or ``v12`` (YuNet, CPU preset)."""
+        cfg = cls(**overrides)
+        if engine == "v12":
+            return replace(
+                cfg,
+                engine="v12",
+                face_detector="yunet",
+                face_model=str(MODELS_DIR / "face_detection_yunet_2023mar.onnx"),
+                face_conf=0.6,
+                face_stride=2,
+                asd_durations=(1, 2, 4),
+                interp="cubic",
+                encoder_preset="veryfast",
+            )
+        if engine != "v10":
+            raise ValueError(f"motor autoframe desconhecido: {engine}")
+        return cfg
 
     def to_dict(self):
         d = asdict(self)

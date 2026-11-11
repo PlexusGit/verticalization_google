@@ -1,0 +1,7 @@
+# v10 YOLO-face detector (AUTOFRAME_ENGINE=v10). GPU image builds only
+# (INSTALL_YOLO=1): ultralytics is AGPL-3.0, so the CPU image does not ship it.
+#
+# ultralytics needs torchvision and transitively requests the non-headless
+# opencv wheels; the Dockerfile reinstalls opencv-contrib-python-headless
+# afterwards so a single cv2 build remains on disk.
+ultralytics==8.3.200

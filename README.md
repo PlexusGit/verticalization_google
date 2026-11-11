@@ -168,7 +168,7 @@ Preencha pelo menos:
 | `SECURITY_TOKEN` | token longo para app, workers e importadores |
 | `GEMINI_API_KEY` | chave da Gemini API |
 | `TRANSCODE_USE_GPU` | `1` para L4 ou `0` para CPU (transcode **e** render vertical) |
-| `AUTOFRAME_ENGINE` | `legacy` (padrão de rollout) ou `v10` para o enquadramento automático |
+| `AUTOFRAME_ENGINE` | `legacy` (padrão de rollout), `v12` (YuNet, imagem CPU) ou `v10` (YOLO, imagem GPU) para o enquadramento automático |
 
 Gere segredos locais, por exemplo:
 

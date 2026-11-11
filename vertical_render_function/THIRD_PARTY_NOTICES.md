@@ -4,7 +4,7 @@ This directory vendors machine-learning model weights and source code used by
 the `autoframe_v10` reframing pipeline. Checksums below are validated during
 the Docker image build (`Dockerfile`, `sha256sum -c`).
 
-## YOLOv11n-face weights
+## YOLOv11n-face weights (GPU image only)
 
 - **File:** `models/yolov11n-face.pt` (Git LFS)
 - **SHA-256:** `9420a9d4933940d2202f511d45df1750e3c1546dd9efc7a3985caae3bbbf7ed2`
@@ -12,7 +12,9 @@ the Docker image build (`Dockerfile`, `sha256sum -c`).
 - **Weight license:** GPL-3.0
 - **Runtime license:** `ultralytics` Python package is AGPL-3.0 (or Ultralytics
   Enterprise). Usage of this worker must comply with the AGPL-3.0 terms —
-  accepted by the project owner for this integration.
+  accepted by the project owner for this integration. Since the `v12` engine,
+  neither `ultralytics` nor these weights are installed in the CPU image
+  (`INSTALL_YOLO=0`); they ship only in GPU builds (`INSTALL_YOLO=1`).
 
 ## LR-ASD (lightweight active-speaker detection)
 
@@ -23,7 +25,7 @@ the Docker image build (`Dockerfile`, `sha256sum -c`).
 - **Source:** <https://github.com/Junhua-Liao/LR-ASD> @ commit `1b6dcd2`
 - **License:** MIT — see `third_party/LR-ASD/LICENSE`
 
-## YuNet face detection (legacy `v3` engine / fallback path)
+## YuNet face detection (`v12` engine and legacy `v3` engine)
 
 - **File:** `models/face_detection_yunet_2023mar.onnx`
 - **Source:** OpenCV Zoo

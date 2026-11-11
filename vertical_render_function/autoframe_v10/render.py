@@ -46,29 +46,36 @@ def ffmpeg_writer(path, w, h, fps, cfg: Config, audio_src=None, start=0.0, durat
         cmd += ["-map", "0:v:0"]
     if audio_src:
         cmd += ["-map", "1:a:0?", "-c:a", "aac", "-b:a", "160k", "-shortest"]
-    cmd += ["-c:v", cfg.encoder, "-b:v", cfg.bitrate, "-pix_fmt", "yuv420p",
+    cmd += ["-c:v", cfg.encoder]
+    if cfg.encoder == "libx264" and cfg.encoder_preset:
+        cmd += ["-preset", cfg.encoder_preset]
+    cmd += ["-b:v", cfg.bitrate, "-pix_fmt", "yuv420p",
             "-movflags", "+faststart", str(path)]
     err = open(stderr_path, "wb") if stderr_path else subprocess.DEVNULL
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=err)
     return proc, err
 
 
-def crop_resize(frame, crop, out_w, out_h):
+def interp_flag(cfg: Config) -> int:
+    return {"cubic": cv2.INTER_CUBIC, "linear": cv2.INTER_LINEAR}.get(cfg.interp, cv2.INTER_LANCZOS4)
+
+
+def crop_resize(frame, crop, out_w, out_h, interp=cv2.INTER_LANCZOS4):
     x, y, w, h = crop
     H, W = frame.shape[:2]
     x1, y1 = int(round(max(0, x))), int(round(max(0, y)))
     x2, y2 = int(round(min(W, x + w))), int(round(min(H, y + h)))
     if x2 <= x1 or y2 <= y1:
-        return cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_LANCZOS4)
-    return cv2.resize(frame[y1:y2, x1:x2], (out_w, out_h), interpolation=cv2.INTER_LANCZOS4)
+        return cv2.resize(frame, (out_w, out_h), interpolation=interp)
+    return cv2.resize(frame[y1:y2, x1:x2], (out_w, out_h), interpolation=interp)
 
 
-def blur_fit(frame, out_w, out_h):
+def blur_fit(frame, out_w, out_h, interp=cv2.INTER_LANCZOS4):
     bg = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
     bg = cv2.GaussianBlur(bg, (0, 0), 25)
     H, W = frame.shape[:2]
     s = out_w / W
-    fg = cv2.resize(frame, (out_w, int(H * s)), interpolation=cv2.INTER_LANCZOS4)
+    fg = cv2.resize(frame, (out_w, int(H * s)), interpolation=interp)
     y0 = (out_h - fg.shape[0]) // 2
     bg[y0:y0 + fg.shape[0]] = fg
     return bg
@@ -76,19 +83,20 @@ def blur_fit(frame, out_w, out_h):
 
 def compose(frame, fr, cfg: Config):
     ow, oh = cfg.output_w, cfg.output_h
+    interp = interp_flag(cfg)
     if fr["layout"] == "blur":
-        return blur_fit(frame, ow, oh)
+        return blur_fit(frame, ow, oh, interp)
     if fr["layout"] == "split" and "crop_top" in fr and "crop_bottom" in fr:
-        top = crop_resize(frame, fr["crop_top"], ow, oh // 2)
-        bot = crop_resize(frame, fr["crop_bottom"], ow, oh - oh // 2)
+        top = crop_resize(frame, fr["crop_top"], ow, oh // 2, interp)
+        bot = crop_resize(frame, fr["crop_bottom"], ow, oh - oh // 2, interp)
         out = np.vstack([top, bot])
         cv2.line(out, (0, oh // 2), (ow, oh // 2), (20, 20, 20), 6)
         return out
     if fr["layout"] == "single":
-        return crop_resize(frame, fr["crop"], ow, oh)
+        return crop_resize(frame, fr["crop"], ow, oh, interp)
     # "center" (sem rosto) e qualquer layout desconhecido -> crop central
     x, y, w, h = fr["crop"]
-    return crop_resize(frame, [x, y, w, h], ow, oh)
+    return crop_resize(frame, [x, y, w, h], ow, oh, interp)
 
 
 def draw_debug(frame, f, fr, analysis, plan_fr_idx, cfg: Config):

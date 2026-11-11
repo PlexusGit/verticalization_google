@@ -213,8 +213,9 @@ def _render_with_v10(
     chapter_id: str | None,
     ass_path: str | None,
     logo_path: str | None,
+    engine: str = "v10",
 ) -> dict[str, Any]:
-    """Analyze, plan, and render an automatic center_crop chapter with v10.
+    """Analyze, plan, and render an automatic center_crop chapter (v10 or v12).
 
     Returns response extras (plan artifact location and stats).  Raises on any
     failure; the caller falls back to a deterministic central crop.
@@ -226,7 +227,8 @@ def _render_with_v10(
     from autoframe_v10.render import render_plan
 
     device = resolve_device()
-    cfg = Config(
+    cfg = Config.for_engine(
+        engine,
         video=source_path,
         start=spec.trim_start,
         duration=spec.duration,
@@ -236,7 +238,7 @@ def _render_with_v10(
         device=device,
         encoder=resolve_encoder(device),
     )
-    logger.info("v10 autoframe device=%s encoder=%s", cfg.device, cfg.encoder)
+    logger.info("%s autoframe detector=%s device=%s encoder=%s", engine, cfg.face_detector, cfg.device, cfg.encoder)
     expected_fp = artifacts.plan_fingerprint(
         cfg,
         source_gcs_path=spec.source_gcs_path,
@@ -275,7 +277,7 @@ def _render_with_v10(
         plan_doc["format"] = artifacts.PLAN_FORMAT
         plan_doc["fingerprint"] = expected_fp
         out_bucket, _ = split_gcs_path(spec.output_gcs_path)
-        blob_path = artifacts.artifact_blob_path(video_id, chapter_id or "chapter", expected_fp)
+        blob_path = artifacts.artifact_blob_path(video_id, chapter_id or "chapter", expected_fp, artifacts.strategy_version(cfg))
         artifact_uri = _upload_bytes(f"gs://{out_bucket}/{blob_path}", artifacts.dumps_plan(plan_doc), "application/gzip")
         logger.info("v10 plano publicado em %s", artifact_uri)
 
@@ -360,22 +362,22 @@ def vertical_render(request: Any):
             strategy_version = FOCAL_STRATEGY_VERSION
             used_v10 = False
             extras: dict[str, Any] = {}
-            if spec.mode == "center_crop" and AUTOFRAME_ENGINE == "v10":
-                from autoframe_v10 import AUTOFRAME_STRATEGY_VERSION
+            if spec.mode == "center_crop" and AUTOFRAME_ENGINE in {"v10", "v12"}:
+                from autoframe_v10 import STRATEGY_VERSIONS
 
-                strategy_version = AUTOFRAME_STRATEGY_VERSION
+                strategy_version = STRATEGY_VERSIONS[AUTOFRAME_ENGINE]
                 used_v10 = True
                 try:
                     extras = _render_with_v10(
                         spec, source_path, output_path, workdir,
                         source_generation=source_generation,
                         video_id=video_id, chapter_id=chapter_id,
-                        ass_path=ass_path, logo_path=logo_path,
+                        ass_path=ass_path, logo_path=logo_path, engine=AUTOFRAME_ENGINE,
                     )
                 except Exception:
                     # Deterministic center crop — never the legacy detector —
-                    # so a v10 failure cannot silently degrade to old framing.
-                    logger.exception("v10 autoframe falhou; recorte central determinístico")
+                    # so an autoframe failure cannot silently degrade to old framing.
+                    logger.exception("%s autoframe falhou; recorte central determinístico", AUTOFRAME_ENGINE)
                     spec = dataclasses.replace(spec, automatic_focal_points=())
                     render(spec, source_path, output_path, ass_path=ass_path, logo_path=logo_path)
             else:

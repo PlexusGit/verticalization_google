@@ -1,0 +1,15 @@
+# Autoframe pipeline dependencies shared by v10 and v12 (AUTOFRAME_ENGINE=v10|v12).
+#
+# torch is installed separately: the CPU image uses the PyTorch cpu wheel index,
+# the GPU image uses PyPI's CUDA-bundled wheels, and local macOS installs use
+# PyPI (MPS support included). LR-ASD needs torch only (no torchvision).
+# The YOLO detector used by v10 lives in requirements-yolo.txt (GPU images).
+scenedetect==0.6.7.1
+scipy==1.16.3
+python-speech-features==0.6
+# mediapipe is intentionally not installed: it pins protobuf<5, which breaks
+# google-cloud-firestore/googleapis-common-protos (their generated code needs
+# protobuf>=5.26's runtime_version module). The FaceMesh visual fallback is
+# optional — models.py disables it gracefully and LR-ASD drives speaker
+# selection alone.
+# mediapipe==0.10.21; python_version < "3.13"

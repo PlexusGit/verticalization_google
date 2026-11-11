@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     # focal keyframes) gates reuse of automatic_focal_points so renders on the
     # legacy engine still reuse their cached trajectories during migration.
     FOCAL_STRATEGY_VERSION: int = 10
+    # Camera-plan strategies the app may hand back to the worker (10 = v10/YOLO,
+    # 12 = v12/YuNet). The worker still validates the plan fingerprint.
+    PLAN_STRATEGY_VERSIONS: tuple[int, ...] = (10, 12)
     LEGACY_FOCAL_STRATEGY_VERSION: int = 3
 
     SERVICE_NAME: str = "plexus-vertical-cuts"

@@ -187,8 +187,9 @@ gcloud billing projects describe "$GOOGLE_CLOUD_PROJECT"
 ### `AUTOFRAME_ENGINE`
 
 - **Fase:** opcional; definir no `.env` antes do deploy ou do `run_all_local.sh`.
-- `legacy` (padrão de rollout): mantém o detector v3 (YuNet + keyframes FFmpeg); o código da v10 já vai na imagem, mas fica inerte até o flip.
-- `v10`: pipeline de três passes (YOLO-face + LR-ASD + câmera planejada) para `center_crop`. Ver `autodetect.md`.
+- `legacy` (padrão de rollout): mantém o detector v3 (YuNet + keyframes FFmpeg); o código autoframe já vai na imagem, mas fica inerte até o flip.
+- `v12`: pipeline de três passes com detector **YuNet** (OpenCV, MIT), detecção a cada 2 frames e LR-ASD com 3 escalas, para `center_crop`. É o motor indicado para a imagem **CPU** (`TRANSCODE_USE_GPU=0`); não usa ultralytics.
+- `v10`: mesma pipeline com **YOLO-face** (ultralytics, AGPL) em todos os frames. Só existe na imagem **GPU** (`TRANSCODE_USE_GPU=1`); o `deploy.sh` do render recusa `v10` em build CPU. Ver `autodetect.md`.
 - `AUTOFRAME_DEVICE` e `AUTOFRAME_ENCODER` são overrides opcionais de dispositivo/encoder quando `TRANSCODE_USE_GPU` não basta.
 
 ### `CLOUD_RUN_DOMAIN`

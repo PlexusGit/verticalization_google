@@ -95,6 +95,8 @@ def audio_vad(audio, sr, fps, n_frames, cfg: Config):
 
 # ---------------------------------------------------------------- detecção + tracking
 def detect_faces(cfg: Config, start_frame, end_frame):
+    if cfg.face_detector == "yunet":
+        return _detect_faces_yunet(cfg, start_frame, end_frame)
     model = models.face_detector(cfg)
     cap = cv2.VideoCapture(cfg.video)
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
@@ -116,6 +118,46 @@ def detect_faces(cfg: Config, start_frame, end_frame):
             logger.info("  faces %d/%d (%.1f fps)", f - start_frame, total, (f - start_frame) / el)
     if batch_frames:
         _run_face_batch(model, cfg, batch_frames, batch_ids, dets)
+    cap.release()
+    return dets
+
+
+def _detect_faces_yunet(cfg: Config, start_frame, end_frame):
+    """YuNet (OpenCV, MIT) on a downscaled frame every ``face_stride`` frames.
+
+    Skipped frames get an empty list; the tracker interpolates across the gaps.
+    """
+    detector = models.face_detector(cfg)
+    stride = max(1, cfg.face_stride)
+    cap = cv2.VideoCapture(cfg.video)
+    W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    target_w = min(W, cfg.face_imgsz)
+    target_h = int(round(target_w * H / W))
+    scale_x, scale_y = W / target_w, H / target_h
+    detector.setInputSize((target_w, target_h))
+    dets = []
+    t0 = time.time()
+    total = end_frame - start_frame
+    for f in range(start_frame, end_frame):
+        ok, frame = cap.read()
+        if not ok:
+            break
+        rel = f - start_frame
+        found = []
+        if rel % stride == 0:
+            small = cv2.resize(frame, (target_w, target_h)) if (W != target_w or H != target_h) else frame
+            _, faces = detector.detect(small)
+            for d in (faces if faces is not None else []):
+                x1 = float(max(0, d[0] * scale_x))
+                y1 = float(max(0, d[1] * scale_y))
+                x2 = float(min(W, (d[0] + d[2]) * scale_x))
+                y2 = float(min(H, (d[1] + d[3]) * scale_y))
+                found.append({"frame": f, "bbox": [x1, y1, x2, y2], "conf": float(d[-1])})
+        dets.append(found)
+        if rel % 600 == 0 and rel > 0:
+            logger.info("  faces (yunet) %d/%d (%.1f fps) stride=%d", rel, total, rel / (time.time() - t0), stride)
     cap.release()
     return dets
 
@@ -148,11 +190,18 @@ def track_scene(cfg: Config, scene_dets):
                         break
         if not track:
             break
-        if len(track) > cfg.track_min_len:
+        stride = max(1, cfg.face_stride)
+        # With stride 1 this is the original rule (len > track_min_len); with a
+        # stride, fewer detections cover the same span.
+        keep = len(track) > cfg.track_min_len if stride == 1 else len(track) >= max(2, cfg.track_min_len // stride)
+        if keep:
             fn = np.array([f["frame"] for f in track])
             bb = np.array([f["bbox"] for f in track])
             fi = np.arange(fn[0], fn[-1] + 1)
-            bbi = np.stack([interp1d(fn, bb[:, j])(fi) for j in range(4)], axis=1)
+            if len(fn) > 1:
+                bbi = np.stack([interp1d(fn, bb[:, j])(fi) for j in range(4)], axis=1)
+            else:
+                bbi = np.tile(bb[0], (len(fi), 1))
             tracks.append({"frames": fi.tolist(), "boxes": bbi.round(1).tolist()})
     return tracks
 

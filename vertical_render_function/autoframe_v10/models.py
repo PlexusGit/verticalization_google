@@ -20,14 +20,27 @@ _mouth_scorer: dict | None = None
 
 
 def face_detector(cfg: Config):
-    """YOLO-face detector, loaded once per (model, device)."""
-    global _face_detector
-    key = (cfg.face_model, cfg.device)
-    if _face_detector is None or _face_detector["key"] != key:
-        from ultralytics import YOLO
+    """Face detector, loaded once per (backend, model, device).
 
-        logger.info("Carregando detector YOLO-face model=%s device=%s", cfg.face_model, cfg.device)
-        _face_detector = {"key": key, "model": YOLO(cfg.face_model)}
+    ``yolo`` needs ultralytics (GPU images only); ``yunet`` is OpenCV's native
+    MIT-licensed detector and runs on CPU.
+    """
+    global _face_detector
+    key = (cfg.face_detector, cfg.face_model, cfg.device, cfg.face_conf, cfg.face_nms)
+    if _face_detector is None or _face_detector["key"] != key:
+        logger.info("Carregando detector %s model=%s device=%s", cfg.face_detector, cfg.face_model, cfg.device)
+        if cfg.face_detector == "yunet":
+            import cv2
+
+            model = cv2.FaceDetectorYN.create(
+                model=cfg.face_model, config="", input_size=(640, 360),
+                score_threshold=cfg.face_conf, nms_threshold=cfg.face_nms, top_k=5000,
+            )
+        else:
+            from ultralytics import YOLO
+
+            model = YOLO(cfg.face_model)
+        _face_detector = {"key": key, "model": model}
     return _face_detector["model"]
 
 

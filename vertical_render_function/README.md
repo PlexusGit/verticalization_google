@@ -27,15 +27,17 @@ falha fechado quando não definido). Um corpo representativo é:
 }
 ```
 
-`center_crop` usa a pipeline **autoframe v10** (`autoframe_v10/`): três passes
-offline — análise (PySceneDetect + YOLO-face + tracking por IoU + LR-ASD para
-locutor ativo), planejamento de câmera (histerese, planos `static`/`pan`/`track`,
+`center_crop` usa a pipeline **autoframe** (`autoframe_v10/`, motor `v10` ou `v12`): três passes
+offline — análise (PySceneDetect + detector facial + tracking por IoU + LR-ASD para
+locutor ativo; `v12` usa o YuNet do OpenCV, `v10` o YOLO-face), planejamento de câmera (histerese, planos `static`/`pan`/`track`,
 zoom fixo por segmento, headroom 42%) e composição frame a frame com
 legendas/logo/títulos na mesma codificação ffmpeg. O plano de câmera é
 fingerprintado e publicado no GCS como `*.plan.json.gz`; o render final reutiliza
 o plano exato do rascunho. Falhas v10 caem para um crop central determinístico;
 `AUTOFRAME_ENGINE=legacy` devolve o detector v3 (YuNet + keyframes) como
-rollback. Detalhes completos em `../autodetect.md`.
+rollback. O `v12` roda na imagem CPU (sem ultralytics); o `v10` exige a imagem GPU
+(`INSTALL_YOLO=1`, definido pelo `deploy.sh` quando `TRANSCODE_USE_GPU=1`). Detalhes
+completos em `../autodetect.md`.
 `split_stack` porta o modelo de keyframes top/bottom x/y independente do RPP,
 incluindo easing de cosseno e limitação de crop. Tempos de legenda e tempos de
 keyframe são tempos absolutos da mídia de origem. Licenças e proveniência dos

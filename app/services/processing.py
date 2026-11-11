@@ -620,7 +620,7 @@ def render_chapter(
     # understands them: v3 focal keyframes for the legacy engine, v10 camera
     # plans for the current engine. Anything else makes the worker re-analyze.
     stored_version = persisted_options.get("focal_strategy_version")
-    reusable_plan = stored_version == settings.FOCAL_STRATEGY_VERSION
+    reusable_plan = stored_version in settings.PLAN_STRATEGY_VERSIONS
     # Legacy focal keyframes carry no fingerprint, so they are reused only when
     # detected for exactly these chapter bounds (a trim change makes them stale).
     chapter_end = float(chapter["end_seconds"])

@@ -382,3 +382,15 @@ def test_drafts_never_request_a_horizontal_cut(monkeypatch, chapter_ref):
     render_chapter("v_test", "chapter_001", RenderRequest(), final=False)
 
     assert payloads[0]["horizontal_output_gcs_path"] == ""
+
+
+@pytest.mark.parametrize("version,sent", [(10, True), (12, True), (3, False), (0, False)])
+def test_camera_plan_is_sent_only_for_autoframe_strategies(monkeypatch, chapter_ref, version, sent):
+    options = RenderRequest(
+        focal_strategy_version=version,
+        camera_plan_gcs_path="v_test/chapters/chapter_001/autoframe/plan.json.gz",
+        camera_plan_fingerprint="ab" * 32,
+    )
+    payload = _payload_for(monkeypatch, options, uuid_hex=f"{version:02d}" * 6)
+    assert bool(payload["camera_plan_gcs_path"]) is sent
+    assert bool(payload["camera_plan_fingerprint"]) is sent
